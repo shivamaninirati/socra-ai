@@ -1,0 +1,62 @@
+# =========================
+# Secrets — NEVER commit these
+# =========================
+backend/.env
+*.env
+!.env.example
+*_socra_token.tmp
+*.tmp
+
+# =========================
+# Python
+# =========================
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# =========================
+# Runtime data & logs
+# =========================
+data/
+backend/data/
+*.log
+socra_test_server.log
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# =========================
+# Frontend
+# =========================
+node_modules/
+frontend/dist/
+.vite/
+
+# =========================
+# Dev scripts with hardcoded credentials
+# =========================
+backend/add_user.py
+backend/create_admin_user.py
+backend/generate_hash.py
+backend/generate_valid_hash.py
+backend/test_passwords.py
+backend/seed_admin.py
+
+# =========================
+# Debug / audit artifacts
+# =========================
+*_MISMATCH_*
+*_AUDIT_*
+*_REPORT*
+alerts-visual-check.png
+
+# =========================
+# OS / editor
+# =========================
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
