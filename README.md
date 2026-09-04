@@ -65,8 +65,8 @@ SOCRA AI is a self-hosted Security Operations Center (SOC) platform that collect
 ### 1. Clone the Repository
 
 ```bash
-git clone <repository-url>
-cd "SOCRA AI"
+git clone https://github.com/shivamaninirati/socra-ai.git
+cd socra-ai
 ```
 
 ### 2. Backend Setup
