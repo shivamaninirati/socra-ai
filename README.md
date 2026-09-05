@@ -1,5 +1,3 @@
-<img src="https://github.com/shivamaninirati/socra-ai/actions/workflows/verify.yml/badge.svg" alt="SOCRA AI Verification"/>
-
 <div align="center">
 
 # 🛰️ SOCRA AI
