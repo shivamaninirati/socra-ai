@@ -14,7 +14,11 @@
   <img src="https://img.shields.io/badge/database-SQLite%20WAL-003B57?style=for-the-badge&logo=sqlite&logoColor=white" alt="database"/>
 </p>
 
-**Self-hosted. Real-time. MITRE ATT&CK aware.**
+<p>
+  <img src="https://github.com/shivamaninirati/socra-ai/actions/workflows/verify.yml/badge.svg" alt="SOCRA AI Verification"/>
+</p>
+
+**Self-hosted. Real-time. MITRE ATT&CK aware.**  
 Collect Windows telemetry, detect threats, investigate alerts, and let AI do the first pass.
 
 </div>
