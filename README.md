@@ -16,6 +16,12 @@
   <img src="https://github.com/shivamaninirati/socra-ai/actions/workflows/verify.yml/badge.svg" alt="SOCRA AI Verification"/>
 </p>
 
+<p>
+  <b>🚀 Version:</b> v0.1.0 &nbsp; | &nbsp;
+  <b>🟢 Status:</b> Actively Verified &nbsp; | &nbsp;
+  <b>🛡️ Platform:</b> Windows
+</p>
+
 **Self-hosted. Real-time. MITRE ATT&CK aware.**  
 Collect Windows telemetry, detect threats, investigate alerts, and let AI do the first pass.
 
