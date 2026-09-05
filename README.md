@@ -1,3 +1,5 @@
+"This project has automated verification."
+
 <div align="center">
 
 # 🛰️ SOCRA AI
