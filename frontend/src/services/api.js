@@ -13,11 +13,17 @@ const api = axios.create({
 // token was attached on the request config so the 401 handler can tell a
 // genuine session expiry apart from stale responses sent by requests that
 // fired before login (or with an older, already-replaced token).
+// Add request interceptor to ensure EVERY request gets the token, regardless of config structure
 api.interceptors.request.use((config) => {
     const token = localStorage.getItem("token");
+    // Always ensure headers object exists
+    config.headers = config.headers || {};
+
     if (token) {
-        config.headers = config.headers || {};
-        config.headers.Authorization = `Bearer ${token}`;
+        // Never overwrite an existing Authorization header - only add if missing
+        if (!config.headers.Authorization) {
+            config.headers.Authorization = `Bearer ${token}`;
+        }
         config._authToken = token;
     }
     return config;

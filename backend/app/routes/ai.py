@@ -1,4 +1,6 @@
 from typing import Optional
+import asyncio
+from functools import partial
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -16,6 +18,21 @@ router = APIRouter(
 
 ai = AIEngine()
 chat = ChatService()
+
+# Backend FIFO queue for processing Ollama requests - per conversation to prevent cross-talk
+# Key: conversation_id, Value: asyncio.Queue to process messages sequentially
+conversation_queues = {}
+# Track which conversation queues are actively being processed
+processing_conversations = set()
+
+# Idle timeout for the per-conversation queue worker (seconds). After this
+# long with no new messages the worker shuts down and is re-spawned on demand.
+QUEUE_IDLE_TIMEOUT_SECONDS = 2.0
+
+# Upper bound on how long a /chat request waits for its own queued answer.
+# Ollama can be slow on cold loads; this only guards against a wedged worker
+# (e.g. a future that is never resolved) so requests never hang forever.
+CHAT_TIMEOUT_SECONDS = 600
 
 
 class InvestigationRequest(BaseModel):
@@ -89,10 +106,145 @@ class SearchConversationsRequest(BaseModel):
     query: str
 
 
+async def process_conversation_queue(conversation_id, user_id):
+    """Background worker that processes queued messages for one conversation sequentially.
+
+    Runs as a long-lived asyncio task: it blocks on queue.get() so messages
+    enqueued while it is idle are never missed, and it exits only after the
+    queue has been empty for QUEUE_IDLE_TIMEOUT_SECONDS. Each queued item
+    carries an asyncio.Future that the submitting /chat request awaits, so
+    every request receives its own answer once processed.
+    """
+    if conversation_id in processing_conversations:
+        return
+
+    processing_conversations.add(conversation_id)
+    queue = conversation_queues.get(conversation_id)
+
+    try:
+        while True:
+            # Block until the next message arrives; exit only after an idle
+            # period so per-conversation workers do not linger forever.
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=QUEUE_IDLE_TIMEOUT_SECONDS)
+            except asyncio.TimeoutError:
+                if queue.empty():
+                    break
+                continue
+
+            request_question = item["question"]
+            request_context = item.get("context")
+            result_future = item.get("future")
+
+            try:
+                # Add user message to conversation
+                sqlite_storage.add_message(
+                    conversation_id,
+                    "user",
+                    request_question
+                )
+                # Flush so user message is persisted before AI response starts
+                sqlite_storage.flush(timeout=3.0)
+
+                # Auto-generate title from first user message
+                conv_check = sqlite_storage.get_conversation(conversation_id, user_id)
+                if conv_check and (not conv_check.get("title") or conv_check.get("title") == "New Conversation"):
+                    auto_title = request_question[:80].strip()
+                    if len(request_question) > 80:
+                        last_space = auto_title.rfind(" ")
+                        if last_space > 40:
+                            auto_title = auto_title[:last_space]
+                        auto_title += "..."
+                    sqlite_storage.update_conversation_title(conversation_id, auto_title)
+
+                # Fetch conversation history for multi-turn context
+                history_messages = sqlite_storage.get_conversation_messages(
+                    conversation_id, user_id, limit=50
+                )
+                # Format history for ChatService (exclude the just-added user
+                # message since it will be the 'question' parameter)
+                conversation_history = []
+                for msg in history_messages[:-1]:  # skip the last message (just-added user msg)
+                    conversation_history.append({
+                        "role": msg["role"],
+                        "content": msg["content"]
+                    })
+
+                # Run blocking Ollama call in thread pool to avoid blocking event loop
+                loop = asyncio.get_running_loop()
+                answer = await loop.run_in_executor(
+                    None,
+                    partial(chat.ask, request_question, conversation_history=conversation_history)
+                )
+
+                # Ollama returns a clearly-marked error banner (never an answer)
+                # when the service/model is unavailable or the request times out.
+                if "# SOCRA AI Unavailable" in answer or "Unable to contact Ollama" in answer:
+                    sqlite_storage.add_message(
+                        conversation_id,
+                        "assistant",
+                        answer,
+                        status="failed"
+                    )
+                    sqlite_storage.flush(timeout=3.0)
+                    result = {
+                        "success": False,
+                        "available": False,
+                        "provider": "Ollama",
+                        "error": answer,
+                        "detail": "Ollama could not answer the question (unavailable or timed out).",
+                    }
+                else:
+                    # Add AI response to conversation
+                    sqlite_storage.add_message(
+                        conversation_id,
+                        "assistant",
+                        answer,
+                        status="completed"
+                    )
+                    # Flush so the frontend immediately sees persisted messages
+                    sqlite_storage.flush(timeout=3.0)
+                    result = {"success": True, "answer": answer}
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error("[AI_CHAT_QUEUE] Error processing message: %s", e, exc_info=True)
+                # Add error message to conversation
+                sqlite_storage.add_message(
+                    conversation_id,
+                    "assistant",
+                    f"Unable to generate a response: {str(e)}",
+                    status="failed"
+                )
+                sqlite_storage.flush(timeout=3.0)
+                result = {"success": False, "error": f"Unable to generate a response: {str(e)}"}
+            finally:
+                # Resolve the waiting request (no-op if it timed out/disconnected)
+                if result_future is not None and not result_future.done():
+                    result_future.set_result({**result, "conversation_id": conversation_id})
+                queue.task_done()
+    finally:
+        processing_conversations.discard(conversation_id)
+        # Safety net: if a request raced with our exit and enqueued a message,
+        # hand the queue over to a fresh worker instead of orphaning the item.
+        queue = conversation_queues.get(conversation_id)
+        if queue is not None and not queue.empty():
+            asyncio.create_task(process_conversation_queue(conversation_id, user_id))
+        else:
+            conversation_queues.pop(conversation_id, None)
+
+
 @router.post("/chat")
-def ai_chat(request: ChatWithConversationRequest, user: dict = Depends(get_current_user)):
+async def ai_chat(request: ChatWithConversationRequest, user: dict = Depends(get_current_user)):
+    """Submit a chat message and wait for its own queued answer.
+
+    Messages are enqueued in a per-conversation FIFO queue and processed one at
+    a time by a background worker, so concurrent submissions never interleave
+    and multi-turn context stays correct. The endpoint only waits for ITS OWN
+    queue item - earlier requests go first, later ones queue up and each
+    receives its own answer once processed.
+    """
     user_id = user.get("sub") or user.get("user_id")
-    
+
     if not request.question.strip():
         return {
             "success": False,
@@ -103,102 +255,56 @@ def ai_chat(request: ChatWithConversationRequest, user: dict = Depends(get_curre
         # Get or create conversation
         conversation_id = request.conversation_id
         conversation = None
-        
+
         if conversation_id:
             # Verify the conversation belongs to the current user
             conversation = sqlite_storage.get_conversation(conversation_id, user_id)
-        
+
         if not conversation:
             # Create a new conversation if none exists or access was denied
             conversation = sqlite_storage.create_conversation(
-                user_id, 
+                user_id,
                 title="New Conversation",
                 context=request.context
             )
             conversation_id = conversation["id"]
-        
-        # Add user message to conversation
-        sqlite_storage.add_message(
-            conversation_id,
-            "user",
-            request.question
-        )
 
-        # Flush so user message is persisted before AI response starts
-        sqlite_storage.flush(timeout=3.0)
+        # Per-conversation FIFO queue; the worker resolves each item's future
+        queue = conversation_queues.setdefault(conversation_id, asyncio.Queue())
+        loop = asyncio.get_running_loop()
+        result_future = loop.create_future()
 
-        # Auto-generate title from first user message
-        conv_check = sqlite_storage.get_conversation(conversation_id, user_id)
-        if conv_check and (not conv_check.get("title") or conv_check.get("title") == "New Conversation"):
-            auto_title = request.question[:80].strip()
-            if len(request.question) > 80:
-                last_space = auto_title.rfind(" ")
-                if last_space > 40:
-                    auto_title = auto_title[:last_space]
-                auto_title += "..."
-            sqlite_storage.update_conversation_title(conversation_id, auto_title)
-        
-        # Fetch conversation history for multi-turn context
-        history_messages = sqlite_storage.get_conversation_messages(
-            conversation_id, user_id, limit=50
-        )
-        # Format history for ChatService (exclude the just-added user message
-        # since it will be the 'question' parameter)
-        conversation_history = []
-        for msg in history_messages[:-1]:  # skip the last message (just-added user msg)
-            conversation_history.append({
-                "role": msg["role"],
-                "content": msg["content"]
-            })
+        await queue.put({
+            "question": request.question,
+            "context": request.context,
+            "future": result_future,
+        })
 
-        # Get AI response with conversation history for context
-        answer = chat.ask(request.question, conversation_history=conversation_history)
+        # Start the worker if none is running for this conversation
+        if conversation_id not in processing_conversations:
+            asyncio.create_task(process_conversation_queue(conversation_id, user_id))
 
-        # Ollama returns a clearly-marked error banner (never an answer)
-        # when the service/model is unavailable or the request times out.
-        if "# SOCRA AI Unavailable" in answer or "Unable to contact Ollama" in answer:
-            sqlite_storage.add_message(
-                conversation_id,
-                "assistant",
-                answer,
-                status="failed"
-            )
-            sqlite_storage.flush(timeout=3.0)
-            return {
-                "success": False,
-                "available": False,
-                "provider": "Ollama",
-                "error": answer,
-                "detail": "Ollama could not answer the question (unavailable or timed out).",
-                "conversation_id": conversation_id
-            }
-        
-        # Add AI response to conversation
-        sqlite_storage.add_message(
-            conversation_id,
-            "assistant",
-            answer,
-            status="completed"
-        )
-        
-        # Flush the write queue so the frontend immediately sees persisted messages
-        sqlite_storage.flush(timeout=3.0)
-        
-        return {
-            "success": True,
-            "answer": answer,
-            "conversation_id": conversation_id
-        }
+        # Wait for OUR message's answer (FIFO: earlier messages go first)
+        result = await asyncio.wait_for(result_future, timeout=CHAT_TIMEOUT_SECONDS)
+        return result
 
-    except Exception as e:
+    except asyncio.TimeoutError:
         import logging
         logging.getLogger(__name__).error(
-            "AI chat failed: %s", e, exc_info=True
+            "[AI_CHAT] Timed out waiting for queued answer (conversation %s)",
+            conversation_id,
         )
         return {
             "success": False,
-            "error": "The chat service failed unexpectedly.",
-            "detail": str(e)
+            "error": "Timed out waiting for the AI response. Please try again.",
+        }
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error("Failed to queue chat request: %s", e, exc_info=True)
+        return {
+            "success": False,
+            "error": str(e),
+            "detail": "Failed to queue chat request."
         }
 
 

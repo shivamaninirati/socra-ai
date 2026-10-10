@@ -32,7 +32,6 @@ function relativeTime(dateStr) {
 /* ── Component ────────────────────────────────────────────────────── */
 function AIChat() {
   const [question, setQuestion] = useState("");
-  const [loading, setLoading] = useState(false);
   const [messages, setMessages] = useState([]);
   const [currentConversationId, setCurrentConversationId] = useState(null);
   const [conversations, setConversations] = useState([]);
@@ -47,6 +46,15 @@ function AIChat() {
   const [deleteAllConfirm, setDeleteAllConfirm] = useState(false);
   const [abortController, setAbortController] = useState(null);
   const [tick, setTick] = useState(0); // forces re-render for live timestamps
+  // FIFO message queue for non-blocking chat processing.
+  // The refs are the source of truth for the worker (so it can be driven
+  // synchronously, independent of render timing); the state mirrors them for
+  // rendering (queued-count badge, status chips, generating indicator).
+  const [messageQueue, setMessageQueue] = useState([]);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const messageQueueRef = useRef([]);
+  const processingRef = useRef(false);
+  const currentConversationIdRef = useRef(null);
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
   const sidebarRef = useRef(null);
@@ -64,7 +72,7 @@ function AIChat() {
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, []);
-  useEffect(() => { scrollToBottom(); }, [messages, loading, scrollToBottom]);
+  useEffect(() => { scrollToBottom(); }, [messages, scrollToBottom]);
 
   /* ── Load conversations on mount ─────────────────────────────── */
   useEffect(() => { initializeChat(); }, []);
@@ -169,63 +177,155 @@ function AIChat() {
     }
   };
 
-  /* ── Send message to AI ──────────────────────────────────────── */
-  const askAI = async (text = question) => {
-    if (!text.trim() || loading) return;
-    const userMessage = text.trim();
-    setQuestion("");
-    setLoading(true);
+  /* ── Core queue processor: processes messages one at a time ───── */
+  const processQueue = async () => {
+    // Never run two workers concurrently — a new one starts only after the
+    // previous message finishes (or the queue is drained by stopGeneration).
+    if (processingRef.current) return;
+    const currentMessage = messageQueueRef.current.shift();
+    if (!currentMessage) return;
+    processingRef.current = true;
+    setIsProcessing(true);
+    setMessageQueue([...messageQueueRef.current]);
 
-    // Immediately show user message in UI
-    const userMsg = { role: "user", content: userMessage, time: new Date().toISOString() };
-    setMessages((prev) => [...prev, userMsg]);
-
+    const { id, userMessage, conversationId } = currentMessage;
     const controller = new AbortController();
     setAbortController(controller);
 
     try {
+      // Mark the user message as processing (not queued anymore)
+      setMessages((prev) => prev.map((msg) =>
+        msg.id === id ? { ...msg, status: "processing" } : msg
+      ));
+
+      // Use the conversation captured at enqueue time, falling back to the
+      // live id (covers the very first message creating the conversation).
       const resp = await api.post(
         "/ai/chat",
-        { question: userMessage, conversation_id: currentConversationId },
+        { question: userMessage, conversation_id: conversationId || currentConversationIdRef.current },
         { signal: controller.signal }
       );
       const data = resp.data || {};
 
-      if (data.conversation_id) {
-        if (data.conversation_id !== currentConversationId) {
-          setCurrentConversationId(data.conversation_id);
-          localStorage.setItem(STORAGE_KEY, data.conversation_id);
-        }
-        // Reload full conversation from DB (includes both user + assistant messages)
-        await loadConversationMessages(data.conversation_id);
-        // Refresh the sidebar list to show updated title/preview
-        await refreshConversationList();
+      // The backend returns the id it created/used for this exchange.
+      if (data.conversation_id && data.conversation_id !== currentConversationIdRef.current) {
+        currentConversationIdRef.current = data.conversation_id;
+        setCurrentConversationId(data.conversation_id);
+        localStorage.setItem(STORAGE_KEY, data.conversation_id);
       }
+
+      // Append the reply for THIS message (and clear its status chip). We
+      // never reload the full conversation here because that would wipe
+      // messages still sitting in the queue that the backend has not
+      // persisted yet.
+      if (data.success === false) {
+        setMessages((prev) => [
+          ...prev.map((msg) =>
+            msg.id === id ? { ...msg, status: "failed" } : msg
+          ),
+          {
+            role: "assistant",
+            content: data.error || "Unable to generate a response. Please try again.",
+            time: new Date().toISOString(),
+            status: "failed",
+          },
+        ]);
+      } else if (data.answer) {
+        setMessages((prev) => [
+          ...prev.map((msg) =>
+            msg.id === id ? { ...msg, status: "completed" } : msg
+          ),
+          {
+            role: "assistant",
+            content: data.answer,
+            time: new Date().toISOString(),
+            status: "completed",
+          },
+        ]);
+      }
+
+      // Refresh the sidebar list (title/preview) without touching messages.
+      await refreshConversationList();
     } catch (error) {
       if (error.name === "CanceledError" || error.name === "AbortError") {
-        return;
+        // If aborted, mark the message as cancelled in the UI
+        setMessages((prev) => prev.map((msg) =>
+          msg.id === id ? { ...msg, status: "cancelled" } : msg
+        ));
+      } else {
+        // Error occurred — mark the message failed and show an error reply
+        setMessages((prev) => prev.map((msg) =>
+          msg.id === id ? { ...msg, status: "failed" } : msg
+        ));
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: "Unable to generate a response. Please try again.",
+            time: new Date().toISOString(),
+            status: "failed",
+          },
+        ]);
       }
-      // Error occurred — keep user message, show error as assistant message
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: "Unable to generate a response. Please try again.",
-          time: new Date().toISOString(),
-          status: "failed",
-        },
-      ]);
     } finally {
-      setLoading(false);
       setAbortController(null);
+      setIsProcessing(false);
+      processingRef.current = false;
+      // Drive the next queued message, if any (FIFO).
+      if (messageQueueRef.current.length > 0) {
+        processQueue();
+      }
     }
+  };
+
+  /* ── Send message to AI: enqueues instead of blocking ────────── */
+  const askAI = async (text = question) => {
+    if (!text.trim()) return;    const userMessage = text.trim();
+    setQuestion("");
+
+    // Create unique ID for tracking this message in queue
+    const messageId = crypto.randomUUID
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    
+    // Immediately show user message in UI with QUEUED status
+    const userMsg = {
+      role: "user",
+      content: userMessage,
+      time: new Date().toISOString(),
+      id: messageId,
+      status: "queued" // "queued" | "processing" | "cancelled"
+    };
+    setMessages((prev) => [...prev, userMsg]);
+
+    // Add to FIFO queue (ref = worker's source of truth, state = render mirror)
+    messageQueueRef.current.push({
+      id: messageId,
+      userMessage,
+      conversationId: currentConversationId,
+    });
+    setMessageQueue([...messageQueueRef.current]);
+
+    // Start processing immediately if the worker is idle — never blocks.
+    processQueue();
   };
 
   /* ── Stop generation ─────────────────────────────────────────── */
   const stopGeneration = () => {
+    // Abort current processing request
     if (abortController) abortController.abort();
-    setLoading(false);
+    // Clear entire queue when user stops generation
+    messageQueueRef.current = [];
+    setMessageQueue([]);
+    processingRef.current = false;
+    setIsProcessing(false);
     setAbortController(null);
+    // Mark everything still waiting as cancelled so the UI stays truthful
+    setMessages((prev) => prev.map((msg) =>
+      msg.status === "queued" || msg.status === "processing"
+        ? { ...msg, status: "cancelled" }
+        : msg
+    ));
   };
 
   /* ── Delete conversation ─────────────────────────────────────── */
@@ -476,7 +576,7 @@ function AIChat() {
 
           {/* Messages area */}
           <div className="flex-1 overflow-y-auto space-y-4 pr-1 mb-4 z-10" style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}>
-            {messages.length === 0 && !loading && (
+            {messages.length === 0 && !loadingHistory && (
               <div className="h-full flex flex-col items-center justify-center text-xs font-medium text-slate-600 font-mono">
                 <Bot size={40} className="text-slate-700 mb-3 animate-pulse" />
                 <p>[ Waiting for remote model execution prompts... ]</p>
@@ -498,6 +598,9 @@ function AIChat() {
                     <span>{msg.role === "user" ? "ANALYST" : "SOCRA_CORE_AI"}</span>
                     <span>&bull;</span>
                     <span>{msg.time ? new Date(msg.time).toLocaleTimeString("en-GB", { hour12: false }) : ""}</span>
+                    {msg.status === "queued" && <span className="text-yellow-400 ml-1">&bull; QUEUED</span>}
+                    {msg.status === "processing" && <span className="text-blue-400 ml-1">&bull; PROCESSING</span>}
+                    {msg.status === "cancelled" && <span className="text-gray-400 ml-1">&bull; CANCELLED</span>}
                     {msg.status === "failed" && <span className="text-red-400 ml-1">&bull; FAILED</span>}
                   </div>
                   <p className="whitespace-pre-wrap font-mono tracking-wide text-slate-200 selection:bg-cyan-500/20">
@@ -507,13 +610,14 @@ function AIChat() {
               </div>
             ))}
 
-            {loading && (
+            {isProcessing && (
               <div className="flex justify-start w-full">
                 <div className="max-w-[85%] rounded-xl px-4 py-3 text-xs font-mono bg-slate-950/30 border border-slate-800/60 text-slate-500 flex items-center gap-2">
                   <Loader2 size={14} className="text-cyan-500/70 animate-spin" />
                   <span className="flex items-center gap-1">
                     <span className="animate-pulse">Generating response</span>
                     <span className="animate-pulse">...</span>
+                    {messageQueue.length > 0 && <span className="text-cyan-400">({messageQueue.length} in queue)</span>}
                   </span>
                 </div>
               </div>
@@ -541,23 +645,24 @@ function AIChat() {
                 value={question}
                 onChange={(e) => setQuestion(e.target.value)}
                 onKeyDown={(e) => {
+                  // ALWAYS allow Enter to send messages - NEVER block, even while processing
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
-                    askAI();
+                    askAI(); // This is safe - askAI enqueues and never blocks
                   }
                 }}
-                placeholder={loading ? "Generating response..." : "Message AI Assistant..."}
-                disabled={loading}
-                className="w-full bg-transparent text-xs p-3.5 pr-20 resize-none outline-none text-slate-200 placeholder:text-slate-500 font-mono disabled:opacity-50"
+                placeholder={isProcessing ? "Add another message to queue..." : "Message AI Assistant..."}
+                disabled={false} // Never disable the textarea - users can always send messages
+                className="w-full bg-transparent text-xs p-3.5 pr-20 resize-none outline-none text-slate-200 placeholder:text-slate-500 font-mono"
               />
               <div className="absolute right-2 bottom-2 shrink-0 flex items-center gap-1.5">
-                {loading ? (
+                {isProcessing ? (
                   <button onClick={stopGeneration} className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-red-600/80 text-white hover:bg-red-500 text-xs font-bold transition-all duration-150 shadow-md">
-                    <StopCircle size={13} /><span>Stop</span>
+                    <StopCircle size={13} /><span>Stop All</span>
                   </button>
                 ) : (
                   <button
-                    disabled={!question.trim()}
+                    disabled={!question.trim()} // Only disable if input is empty - always allow sending when there's text
                     onClick={() => askAI()}
                     className="flex items-center justify-center p-2 rounded-lg bg-cyan-600 text-white hover:bg-cyan-500 disabled:opacity-20 disabled:cursor-not-allowed transition-all duration-150 shadow-md"
                   >

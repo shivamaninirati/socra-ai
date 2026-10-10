@@ -22,7 +22,21 @@ class ChatService:
 
             ev = event.get("event", {})
             det = event.get("detection", {})
+            # A detection may map to multiple MITRE techniques: build_mitre_block
+            # returns a list of blocks then, so never assume a dict here.
             mitre = det.get("mitre", {})
+            if isinstance(mitre, list):
+                mitre_label = "; ".join(
+                    f"{m.get('id', '')} - {m.get('technique', '')}"
+                    for m in mitre
+                    if isinstance(m, dict)
+                ) or "not mapped"
+            else:
+                mitre_label = (
+                    f"{mitre.get('id', '')} - {mitre.get('technique', '')}"
+                    if isinstance(mitre, dict)
+                    else "not mapped"
+                )
 
             context.append(
 
@@ -33,7 +47,7 @@ Event ID: {ev.get('event_id')}
 Process: {ev.get('process_name')}
 Severity: {det.get('severity')}
 Detection: {det.get('detection')}
-MITRE: {mitre.get('id')} - {mitre.get('technique')}
+MITRE: {mitre_label}
 """
             )
 
