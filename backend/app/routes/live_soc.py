@@ -1,12 +1,16 @@
 from datetime import datetime
 from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 
-from app.auth.auth_service import auth_service
 from app.auth.dependencies import get_current_user
+from app.auth.ws_ticket_service import extract_ticket, ws_ticket_service
 from app.collector.event_store import event_store
+from app.core.config import settings
+from app.core.logger import get_module_logger
 from app.services.collector_status_service import get_collector_runtime_status
 from app.services.live_soc_service import live_soc
 from app.storage.storage_manager import storage_manager
+
+logger = get_module_logger("routes.live_soc")
 
 router = APIRouter(
     prefix="/live",
@@ -93,36 +97,104 @@ def get_live_events_after(
     }
 
 
+@router.post("/ws-ticket")
+def issue_websocket_ticket(user: dict = Depends(get_current_user)):
+    """Issue a short-lived, single-use WebSocket handshake ticket.
+
+    The browser exchanges its JWT here — over authenticated HTTP — for a
+    random ticket that is valid for the next WebSocket handshake only: a few
+    seconds, exactly once, and bound to the verified user from the JWT. The
+    JWT itself is never sent on the WebSocket connection (not in the URL,
+    not in a header), and the ticket is never echoed back or logged.
+    """
+    ticket, expires_in = ws_ticket_service.issue(user)
+    return {
+        "ticket": ticket,
+        "token_type": "websocket_ticket",
+        "expires_in": expires_in,
+    }
+
+
+def _origin_allowed(websocket: WebSocket, origin: str) -> bool:
+    """Cross-site WebSocket hijacking check for the handshake.
+
+    Browsers always send an Origin header on a WebSocket upgrade, so a page
+    hosted on an attacker-controlled origin fails this check and is rejected
+    before authentication. Requests with no Origin header come from
+    non-browser clients, which have no ambient credentials to abuse — they
+    still need a valid single-use ticket to connect.
+    """
+    if not origin:
+        return True
+
+    allowed = {
+        o.strip().rstrip("/")
+        for o in settings.CORS_ORIGINS.split(",")
+        if o.strip()
+    }
+    # Same-host origins: the frontend may be served by this API itself, in
+    # which case the Origin matches the WebSocket endpoint's own host.
+    netloc = websocket.url.netloc
+    if netloc:
+        allowed.add(f"http://{netloc}")
+        allowed.add(f"https://{netloc}")
+
+    return origin.rstrip("/") in allowed
+
+
 @router.websocket("/live")
 async def websocket_endpoint(websocket: WebSocket):
 
-    # Require a valid JWT on the WebSocket handshake. The frontend sends it as
-    # a WebSocket subprotocol (Sec-WebSocket-Protocol header) so the token
-    # never appears in the URL query string / access logs. The chosen
-    # subprotocol is echoed back on accept to complete the negotiation.
-    # Unauthenticated connections are rejected with a 4401 close.
-    token = ""
+    # Origin first: handshakes from origins outside CORS_ORIGINS (e.g. a
+    # cross-site page trying to hijack the live event stream) are rejected
+    # before any authentication challenge or event data is exposed.
+    origin = websocket.headers.get("origin", "")
+    if not _origin_allowed(websocket, origin):
+        logger.warning("[LiveSOC] WebSocket handshake rejected: origin not allowed")
+        await websocket.close(code=4403, reason="Forbidden: Origin not allowed")
+        return
+
+    # Authentication: a short-lived, single-use ticket previously requested
+    # from POST /live/ws-ticket (authenticated HTTP). The ticket rides in the
+    # Sec-WebSocket-Protocol header — never in the URL — and is consumed
+    # atomically below, so it cannot be replayed.
     subprotocol_header = websocket.headers.get("sec-websocket-protocol", "")
+    from app.auth.ws_ticket_service import TICKET_SUBPROTOCOL_PREFIX
+    
+    # Extract the full subprotocol entry that contains our valid ticket
+    valid_subprotocol = None
     if subprotocol_header:
-        # A client may offer several protocols; take the first offered token.
-        token = subprotocol_header.split(",")[0].strip()
-
-    print(f"[WEBSOCKET_HANDSHAKE] Received subprotocol header: {subprotocol_header}")
-    print(f"[WEBSOCKET_HANDSHAKE] Extracted token: {token[:20]}... (truncated)")
+        for entry in subprotocol_header.split(","):
+            entry = entry.strip()
+            if entry.startswith(TICKET_SUBPROTOCOL_PREFIX):
+                valid_subprotocol = entry
+                break
     
-    if not token:
-        print("[WEBSOCKET_HANDSHAKE] No token provided, closing with 4401")
-        await websocket.close(code=4401, reason="Unauthorized: No token provided")
-        return
-        
-    token_valid = auth_service.verify_token(token)
-    print(f"[WEBSOCKET_HANDSHAKE] Token verification result: {token_valid}")
-    
-    if not token_valid:
-        await websocket.close(code=4401, reason="Unauthorized: Invalid token")
+    ticket = extract_ticket(subprotocol_header)
+    if not ticket:
+        logger.warning("[LiveSOC] WebSocket handshake rejected: no ticket provided")
+        await websocket.close(code=4401, reason="Unauthorized: No ticket provided")
         return
 
-    await live_soc.connect(websocket, subprotocol=token)
+    identity = ws_ticket_service.consume(ticket)
+    if identity is None:
+        # Missing (already consumed), invalid, expired, or replayed ticket.
+        logger.warning(
+            "[LiveSOC] WebSocket handshake rejected: ticket invalid, expired, or already used"
+        )
+        await websocket.close(code=4401, reason="Unauthorized: Invalid ticket")
+        return
+
+    # Log only non-sensitive identity fields — never the ticket, the JWT,
+    # or any other credential.
+    logger.info(
+        "[LiveSOC] WebSocket authenticated: user=%s role=%s",
+        identity.get("sub"),
+        identity.get("role"),
+    )
+
+    # Pass the valid subprotocol to live_soc_service which handles the single accept() call
+    await live_soc.connect(websocket, valid_subprotocol=valid_subprotocol)
 
     try:
 
@@ -133,17 +205,19 @@ async def websocket_endpoint(websocket: WebSocket):
         })
 
         while True:
-
-            # Wait for heartbeat from frontend - can be JSON or raw text
+            # Maintain persistent connection with proper heartbeat handling
             try:
                 data = await websocket.receive_text()
-                # Accept both raw "heartbeat" and JSON formatted heartbeats
+                # Accept both raw "heartbeat" and any JSON message containing heartbeat
                 if data and (data == "heartbeat" or 'heartbeat' in data.lower()):
                     continue
+                # If we get any other valid data, just continue listening
+                continue
             except WebSocketDisconnect:
                 live_soc.disconnect(websocket)
                 break
-            except Exception:
+            except Exception as e:
+                logger.warning("[LiveSOC] WebSocket receive error: %s", e)
                 live_soc.disconnect(websocket)
                 break
 

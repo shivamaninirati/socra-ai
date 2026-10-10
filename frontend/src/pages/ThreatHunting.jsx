@@ -24,9 +24,10 @@ function ThreatHunting() {
     severities: [],
     pids: [],
   });
+
   const [filterLoading, setFilterLoading] = useState(true);
 
-  // Custom hunt criteria (all optional, ANDed server-side).
+  // Custom hunt criteria
   const [criteria, setCriteria] = useState({
     event_id: "",
     process: "",
@@ -39,55 +40,78 @@ function ThreatHunting() {
     keyword: "",
   });
 
-  // Load hunts list
+  // Load available hunts
   useEffect(() => {
     let cancelled = false;
+
     async function init() {
       try {
-        const data = await api.get("/hunt/list");
-        if (!cancelled) setHunts(data.data.hunts || {});
+        const response = await api.get("/hunt/list");
+
+        if (!cancelled) {
+          setHunts(response.data.hunts || {});
+        }
       } catch {
-        // Non-critical — existing hunts remain visible.
+        // Existing hunts remain visible if loading fails.
       }
     }
+
     init();
-    return () => { cancelled = true; };
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  // Load dynamic filter options from backend
+  // Load dynamic filter options
   useEffect(() => {
     let cancelled = false;
+
     async function loadFilters() {
       try {
-        const res = await api.get("/hunt/filters");
-        const d = res.data || {};
+        const response = await api.get("/hunt/filters");
+        const data = response.data || {};
+
         if (cancelled) return;
+
         setFilterOptions({
-          hosts: d.hosts || [],
-          users: d.users || [],
-          processes: d.processes || [],
-          eventIds: d.event_ids || [],
-          mitres: d.mitres || [],
-          severities: d.severities || [],
-          pids: d.pids || [],
+          hosts: data.hosts || [],
+          users: data.users || [],
+          processes: data.processes || [],
+          eventIds: data.event_ids || [],
+          mitres: data.mitres || [],
+          severities: data.severities || [],
+          pids: data.pids || [],
         });
       } catch {
-        // Fallback to empty — dropdowns will show "No options available"
+        // Dropdowns fall back to empty option lists.
       } finally {
-        if (!cancelled) setFilterLoading(false);
+        if (!cancelled) {
+          setFilterLoading(false);
+        }
       }
     }
+
     loadFilters();
-    return () => { cancelled = true; };
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
+  // Execute a predefined hunt
   const executeHunt = async (huntKey) => {
     setLoading(true);
     setSelectedHunt(huntKey);
     setError("");
+
     try {
-      const response = await api.post("/hunt/run", { hunt: huntKey });
+      const response = await api.post("/hunt/run", {
+        hunt: huntKey,
+      });
+
       const data = response.data;
+
       if (data.success) {
         setResults(data.results || []);
         setTotal(data.total || data.count || 0);
@@ -100,25 +124,34 @@ function ThreatHunting() {
       setResults([]);
       setTotal(0);
       setError("Hunt backend is unavailable.");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
+  // Execute a custom hunt
   const runCustomHunt = async () => {
     const payload = {};
+
     Object.entries(criteria).forEach(([key, value]) => {
-      if (value && value !== "All" && value !== "") payload[key] = value;
+      if (value && value !== "All" && value !== "") {
+        payload[key] = value;
+      }
     });
+
     if (Object.keys(payload).length === 0) {
       setError("Provide at least one hunt criterion.");
       return;
     }
+
     setLoading(true);
     setSelectedHunt("Custom Hunt");
     setError("");
+
     try {
       const response = await api.post("/hunt/search", payload);
       const data = response.data;
+
       if (data.success) {
         setResults(data.results || []);
         setTotal(data.total || data.count || 0);
@@ -131,70 +164,63 @@ function ThreatHunting() {
       setResults([]);
       setTotal(0);
       setError("Hunt backend is unavailable.");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const updateCriteria = useCallback((key, value) => {
-    setCriteria((prev) => ({ ...prev, [key]: value }));
+    setCriteria((previous) => ({
+      ...previous,
+      [key]: value,
+    }));
   }, []);
 
-  // Build option lists with "Any" as first option
-  const hostOptions = useMemo(() => [
-    { value: "", label: "Any host" },
-    ...filterOptions.hosts.map((item) => ({
-      value: item.value,
-      label: `${item.value} (${item.count.toLocaleString()})`,
-    })),
-  ], [filterOptions.hosts]);
+  // Build dropdown options
+  const buildOptions = useCallback((items, label) => {
+    return [
+      { value: "", label },
+      ...items.map((item) => ({
+        value: item.value,
+        label: `${item.value} (${(item.count || 0).toLocaleString()})`,
+      })),
+    ];
+  }, []);
 
-  const userOptions = useMemo(() => [
-    { value: "", label: "Any user" },
-    ...filterOptions.users.map((item) => ({
-      value: item.value,
-      label: `${item.value} (${item.count.toLocaleString()})`,
-    })),
-  ], [filterOptions.users]);
+  const hostOptions = useMemo(
+    () => buildOptions(filterOptions.hosts, "Any host"),
+    [filterOptions.hosts, buildOptions]
+  );
 
-  const processOptions = useMemo(() => [
-    { value: "", label: "Any process" },
-    ...filterOptions.processes.map((item) => ({
-      value: item.value,
-      label: `${item.value} (${item.count.toLocaleString()})`,
-    })),
-  ], [filterOptions.processes]);
+  const userOptions = useMemo(
+    () => buildOptions(filterOptions.users, "Any user"),
+    [filterOptions.users, buildOptions]
+  );
 
-  const eventIdOptions = useMemo(() => [
-    { value: "", label: "Any event ID" },
-    ...filterOptions.eventIds.map((item) => ({
-      value: item.value,
-      label: `${item.value} (${item.count.toLocaleString()})`,
-    })),
-  ], [filterOptions.eventIds]);
+  const processOptions = useMemo(
+    () => buildOptions(filterOptions.processes, "Any process"),
+    [filterOptions.processes, buildOptions]
+  );
 
-  const mitreOptions = useMemo(() => [
-    { value: "", label: "Any MITRE technique" },
-    ...filterOptions.mitres.map((item) => ({
-      value: item.value,
-      label: `${item.value} (${item.count.toLocaleString()})`,
-    })),
-  ], [filterOptions.mitres]);
+  const eventIdOptions = useMemo(
+    () => buildOptions(filterOptions.eventIds, "Any event ID"),
+    [filterOptions.eventIds, buildOptions]
+  );
 
-  const severityOptions = useMemo(() => [
-    { value: "", label: "Any severity" },
-    ...filterOptions.severities.map((item) => ({
-      value: item.value,
-      label: `${item.value} (${item.count.toLocaleString()})`,
-    })),
-  ], [filterOptions.severities]);
+  const mitreOptions = useMemo(
+    () => buildOptions(filterOptions.mitres, "Any MITRE technique"),
+    [filterOptions.mitres, buildOptions]
+  );
 
-  const pidOptions = useMemo(() => [
-    { value: "", label: "Any PID" },
-    ...filterOptions.pids.map((item) => ({
-      value: item.value,
-      label: `${item.value} (${item.count.toLocaleString()})`,
-    })),
-  ], [filterOptions.pids]);
+  const severityOptions = useMemo(
+    () => buildOptions(filterOptions.severities, "Any severity"),
+    [filterOptions.severities, buildOptions]
+  );
+
+  const pidOptions = useMemo(
+    () => buildOptions(filterOptions.pids, "Any PID"),
+    [filterOptions.pids, buildOptions]
+  );
 
   const timeOptions = [
     { value: "today", label: "Today" },
@@ -205,10 +231,21 @@ function ThreatHunting() {
   ];
 
   const activeFilterCount = useMemo(() => {
-    return ["event_id", "process", "pid", "host", "user", "mitre", "severity"]
-      .filter((key) => criteria[key] !== "" && criteria[key] !== "All").length +
+    const selectedFilters = [
+      "event_id",
+      "process",
+      "pid",
+      "host",
+      "user",
+      "mitre",
+      "severity",
+    ].filter((key) => criteria[key] !== "" && criteria[key] !== "All").length;
+
+    return (
+      selectedFilters +
       (criteria.keyword ? 1 : 0) +
-      (criteria.time_range !== "last_7d" ? 1 : 0);
+      (criteria.time_range !== "last_7d" ? 1 : 0)
+    );
   }, [criteria]);
 
   const clearFilters = useCallback(() => {
@@ -225,6 +262,14 @@ function ThreatHunting() {
     });
   }, []);
 
+  const labelClass =
+    "text-[10px] font-bold uppercase tracking-wider text-slate-500";
+
+  const fieldClass = "flex flex-col gap-1 min-w-0";
+
+  const inputClass =
+    "h-10 w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 text-xs font-medium text-slate-200 placeholder:text-slate-600 outline-none transition-colors focus:border-slate-600 focus:ring-1 focus:ring-slate-700/40";
+
   return (
     <div className="space-y-8">
       <PageHeader
@@ -233,46 +278,114 @@ function ThreatHunting() {
       />
 
       {error && (
-        <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-xs text-red-300 flex items-center justify-between">
-          <span>{error}</span>
-          <button onClick={() => setError("")} className="text-red-400 hover:text-red-300 text-[10px] font-bold uppercase">Dismiss</button>
+        <div className="flex items-center justify-between gap-4 rounded-xl border border-red-500/20 bg-red-500/[0.06] px-4 py-3">
+          <div className="flex items-center gap-3">
+            <span className="h-2 w-2 shrink-0 rounded-full bg-red-400" />
+            <span className="text-xs text-red-300">{error}</span>
+          </div>
+
+          <button
+            onClick={() => setError("")}
+            className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-red-400 transition hover:text-red-300"
+          >
+            Dismiss
+          </button>
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-        {Object.entries(hunts).map(([key, hunt]) => (
-          <HuntCard
-            key={key}
-            huntKey={key}
-            hunt={hunt}
-            onRun={executeHunt}
-          />
-        ))}
-      </div>
+      {/* Predefined threat hunts */}
+      <section className="space-y-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-200">
+              Detection Hunts
+            </h2>
+            <p className="mt-1 text-xs text-slate-500">
+              Run predefined queries against collected telemetry.
+            </p>
+          </div>
 
-      {/* Custom hunt over local telemetry */}
-      <div className="bg-slate-800/40 rounded-xl p-5 border border-slate-700/60">
-        <div className="flex items-center justify-between mb-1">
-          <h2 className="text-xl font-semibold text-white">Custom Hunt</h2>
+          <span className="rounded-md border border-slate-800 bg-slate-900/60 px-2.5 py-1 text-[10px] font-medium text-slate-500">
+            {Object.keys(hunts).length} available
+          </span>
+        </div>
+
+        {Object.keys(hunts).length > 0 ? (
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {Object.entries(hunts).map(([key, hunt]) => (
+              <HuntCard
+                key={key}
+                huntKey={key}
+                hunt={hunt}
+                onRun={executeHunt}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-xl border border-slate-800/80 bg-slate-950/40 px-5 py-8 text-center">
+            <p className="text-sm text-slate-400">
+              No predefined hunts are available.
+            </p>
+            <p className="mt-1 text-xs text-slate-600">
+              You can still create a custom hunt below.
+            </p>
+          </div>
+        )}
+      </section>
+
+      {/* Custom hunt */}
+      <section className="rounded-xl border border-slate-800/80 bg-slate-950/50 p-5 sm:p-6">
+        <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-700/70 bg-slate-900">
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.7"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="text-slate-400"
+                >
+                  <circle cx="11" cy="11" r="7" />
+                  <path d="m20 20-4-4" />
+                  <path d="M11 8v6M8 11h6" />
+                </svg>
+              </div>
+
+              <h2 className="text-base font-semibold text-slate-100">
+                Custom Hunt
+              </h2>
+            </div>
+
+            <p className="mt-2 max-w-2xl text-xs leading-5 text-slate-500">
+              Query the local SQLite telemetry store using one or more
+              criteria. Selected criteria are combined server-side.
+            </p>
+          </div>
+
           {activeFilterCount > 0 && (
             <button
               onClick={clearFilters}
-              className="text-xs font-semibold text-slate-400 transition hover:text-cyan-400"
+              className="rounded-lg border border-slate-800 px-3 py-2 text-xs font-medium text-slate-400 transition hover:border-slate-700 hover:bg-slate-900 hover:text-slate-200"
             >
-              Clear filters ({activeFilterCount})
+              Clear filters
+              <span className="ml-2 rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-300">
+                {activeFilterCount}
+              </span>
             </button>
           )}
         </div>
-        <p className="text-slate-500 text-sm mb-4">
-          Query the local SQLite telemetry store by any combination of criteria.
-        </p>
 
-        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
-          <label className="flex flex-col gap-1">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Event ID</span>
+        <div className="grid grid-cols-1 gap-x-4 gap-y-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+          <label className={fieldClass}>
+            <span className={labelClass}>Event ID</span>
             <Dropdown
               value={criteria.event_id}
-              onChange={(val) => updateCriteria("event_id", val)}
+              onChange={(value) => updateCriteria("event_id", value)}
               options={eventIdOptions}
               ariaLabel="Event ID"
               searchable
@@ -282,11 +395,11 @@ function ThreatHunting() {
             />
           </label>
 
-          <label className="flex flex-col gap-1">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Process</span>
+          <label className={fieldClass}>
+            <span className={labelClass}>Process</span>
             <Dropdown
               value={criteria.process}
-              onChange={(val) => updateCriteria("process", val)}
+              onChange={(value) => updateCriteria("process", value)}
               options={processOptions}
               ariaLabel="Process"
               searchable
@@ -296,11 +409,11 @@ function ThreatHunting() {
             />
           </label>
 
-          <label className="flex flex-col gap-1">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">PID</span>
+          <label className={fieldClass}>
+            <span className={labelClass}>PID</span>
             <Dropdown
               value={criteria.pid}
-              onChange={(val) => updateCriteria("pid", val)}
+              onChange={(value) => updateCriteria("pid", value)}
               options={pidOptions}
               ariaLabel="Process ID"
               searchable
@@ -310,11 +423,11 @@ function ThreatHunting() {
             />
           </label>
 
-          <label className="flex flex-col gap-1">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Host</span>
+          <label className={fieldClass}>
+            <span className={labelClass}>Host</span>
             <Dropdown
               value={criteria.host}
-              onChange={(val) => updateCriteria("host", val)}
+              onChange={(value) => updateCriteria("host", value)}
               options={hostOptions}
               ariaLabel="Host"
               searchable
@@ -324,11 +437,11 @@ function ThreatHunting() {
             />
           </label>
 
-          <label className="flex flex-col gap-1">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">User</span>
+          <label className={fieldClass}>
+            <span className={labelClass}>User</span>
             <Dropdown
               value={criteria.user}
-              onChange={(val) => updateCriteria("user", val)}
+              onChange={(value) => updateCriteria("user", value)}
               options={userOptions}
               ariaLabel="User"
               searchable
@@ -338,11 +451,11 @@ function ThreatHunting() {
             />
           </label>
 
-          <label className="flex flex-col gap-1">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">MITRE</span>
+          <label className={fieldClass}>
+            <span className={labelClass}>MITRE Technique</span>
             <Dropdown
               value={criteria.mitre}
-              onChange={(val) => updateCriteria("mitre", val)}
+              onChange={(value) => updateCriteria("mitre", value)}
               options={mitreOptions}
               ariaLabel="MITRE technique"
               searchable
@@ -352,81 +465,142 @@ function ThreatHunting() {
             />
           </label>
 
-          <label className="flex flex-col gap-1">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Severity</span>
+          <label className={fieldClass}>
+            <span className={labelClass}>Severity</span>
             <Dropdown
               value={criteria.severity}
-              onChange={(val) => updateCriteria("severity", val)}
+              onChange={(value) => updateCriteria("severity", value)}
               options={severityOptions}
               ariaLabel="Severity"
               clearable
               loading={filterLoading}
+              emptyText="No severities available"
             />
           </label>
 
-          <label className="flex flex-col gap-1">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Time Range</span>
+          <label className={fieldClass}>
+            <span className={labelClass}>Time Range</span>
             <Dropdown
               value={criteria.time_range}
-              onChange={(val) => updateCriteria("time_range", val)}
+              onChange={(value) => updateCriteria("time_range", value)}
               options={timeOptions}
               ariaLabel="Time range"
             />
           </label>
 
-          <label className="flex flex-col gap-1 col-span-2 md:col-span-1">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Keyword / IP / Hash</span>
+          <label className={`${fieldClass} sm:col-span-2 lg:col-span-1`}>
+            <span className={labelClass}>Keyword / IP / Hash</span>
             <input
               type="text"
               value={criteria.keyword}
-              onChange={(e) => updateCriteria("keyword", e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && runCustomHunt()}
+              onChange={(event) =>
+                updateCriteria("keyword", event.target.value)
+              }
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !loading) {
+                  runCustomHunt();
+                }
+              }}
               placeholder="e.g. 198.51.100.7"
-              className="h-10 bg-slate-900/50 border border-slate-800 rounded-lg px-3 text-xs font-semibold text-slate-200 placeholder:text-slate-600 outline-none focus:border-cyan-500/60"
+              className={inputClass}
             />
           </label>
         </div>
 
-        <div className="flex items-center gap-3 mt-4">
+        <div className="mt-6 flex flex-wrap items-center gap-3 border-t border-slate-800/70 pt-5">
           <button
             onClick={runCustomHunt}
             disabled={loading}
-            className="px-5 py-2 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-white text-xs font-bold rounded-lg transition-all"
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800 px-4 py-2.5 text-xs font-semibold text-slate-100 transition hover:border-slate-600 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {loading ? "Running..." : "Run Custom Hunt"}
+            {loading && selectedHunt === "Custom Hunt" ? (
+              <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-400 border-t-transparent" />
+            ) : (
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <circle cx="11" cy="11" r="7" />
+                <path d="m20 20-4-4" />
+              </svg>
+            )}
+            {loading && selectedHunt === "Custom Hunt"
+              ? "Running hunt..."
+              : "Run Custom Hunt"}
           </button>
+
           {selectedHunt && selectedHunt !== "Custom Hunt" && (
             <span className="text-xs text-slate-500">
-              Last run: <span className="text-cyan-400 font-bold">{selectedHunt}</span>
+              Last predefined hunt:{" "}
+              <span className="font-medium text-slate-300">
+                {selectedHunt}
+              </span>
+            </span>
+          )}
+
+          {activeFilterCount > 0 && (
+            <span className="ml-auto text-[11px] text-slate-500">
+              {activeFilterCount} active{" "}
+              {activeFilterCount === 1 ? "filter" : "filters"}
             </span>
           )}
         </div>
-      </div>
+      </section>
 
-      <div className="bg-slate-800/40 rounded-xl p-5 border border-slate-700/60">
-        <div className="flex justify-between items-center mb-6">
-          <h2 className="text-xl font-semibold text-white">Hunt Results</h2>
-          <div className="flex items-center gap-3">
-            {total > 0 && (
-              <span className="text-xs text-slate-500">
-                <span className="font-mono font-bold text-cyan-400">{total.toLocaleString()}</span> matching
+      {/* Hunt results */}
+      <section className="overflow-hidden rounded-xl border border-slate-800/80 bg-slate-950/50">
+        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800/80 px-5 py-4 sm:px-6">
+          <div>
+            <h2 className="text-base font-semibold text-slate-100">
+              Hunt Results
+            </h2>
+            <p className="mt-1 text-xs text-slate-500">
+              Matching events from local telemetry.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            {selectedHunt && (
+              <span className="rounded-md border border-slate-800 bg-slate-900/70 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                {selectedHunt}
               </span>
             )}
-            {selectedHunt && (
-              <span className="text-cyan-400 text-xs font-bold uppercase tracking-wider">{selectedHunt}</span>
+
+            {!loading && (
+              <span className="text-xs text-slate-500">
+                <span className="font-mono font-semibold tabular-nums text-slate-200">
+                  {total.toLocaleString()}
+                </span>{" "}
+                matching
+              </span>
             )}
           </div>
         </div>
 
         {loading ? (
-          <div className="text-center py-20">
-            <div className="animate-spin rounded-full h-12 w-12 border-4 border-cyan-500 border-t-transparent mx-auto"></div>
-            <p className="mt-6 text-slate-400">Querying local telemetry...</p>
+          <div className="flex flex-col items-center justify-center py-20">
+            <div className="relative flex h-10 w-10 items-center justify-center">
+              <div className="absolute inset-0 animate-spin rounded-full border-2 border-slate-700 border-t-slate-300" />
+              <div className="h-2 w-2 rounded-full bg-slate-300" />
+            </div>
+
+            <p className="mt-5 text-sm font-medium text-slate-300">
+              Querying local telemetry...
+            </p>
+            <p className="mt-1 text-xs text-slate-600">
+              This may take a moment.
+            </p>
           </div>
         ) : (
           <HuntResultsTable results={results} />
         )}
-      </div>
+      </section>
     </div>
   );
 }

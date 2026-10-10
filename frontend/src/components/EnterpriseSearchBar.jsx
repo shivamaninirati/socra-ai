@@ -1,121 +1,384 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  useMemo,
+} from "react";
+
 import {
   Search,
-  Terminal,
   X,
-  Clock3,
-  History,
+  Clock,
   Sparkles,
-  Monitor,
-  User,
-  Cpu,
-  Shield,
-  Globe,
+  ChevronDown,
   Loader2,
   HelpCircle,
+  AlertTriangle,
+  CheckCircle,
+  History,
+  FileJson,
+  ArrowUpRight,
+  Zap,
 } from "lucide-react";
+
 import api from "../services/api";
 import { isCleanSuggestion } from "./SearchSuggestionGuard";
 
-// ===================================================================
-// ENTERPRISE SEARCH QUERY PARSER (client-side token coloring/display)
-// ===================================================================
-const parseEnterpriseQuery = (input) => {
-  const tokens = {};
-  const keywords = [];
-  const textChunks = [];
+import {
+  parseQuery,
+  validateQuery,
+  queryToBackend,
+  SOCRA_FIELDS,
+} from "../lib/socra-query";
 
-  if (!input || typeof input !== "string") {
-    return { tokens, keywords, textChunks, raw: "", hasBoolean: false };
-  }
+/* ============================================================
+   FIELD SUGGESTIONS
+   ============================================================ */
 
-  const fieldRegex = /(\w+):(?:"([^"]*)"|\[([^\]]*)\]|(\S+))/g;
-  let match;
-  let cleaned = input;
+const FIELD_SUGGESTIONS = Object.entries(SOCRA_FIELDS).map(
+  ([key, def]) => ({
+    value: `${key}:`,
+    label: key,
+    description: def?.description || "",
+    type: def?.type || "field",
+    category: def?.category || "general",
+    examples: def?.examples || [],
+    _type: "field",
+  })
+);
 
-  const severityMap = {
-    critical: "Critical", high: "High", medium: "Medium",
-    low: "Low", informational: "Informational", info: "Informational",
-  };
-
-  while ((match = fieldRegex.exec(input)) !== null) {
-    const key = match[1].toLowerCase().trim();
-    const value = (match[2] || match[3] || match[4] || "").trim();
-    if (value) {
-      tokens[key] = key === "severity" ? (severityMap[value.toLowerCase()] || value) : value;
-    }
-    cleaned = cleaned.replace(match[0], "");
-  }
-
-  const eqRegex = /(\w+)=(?:"([^"]*)"|\[([^\]]*)\]|(\S+))/g;
-  while ((match = eqRegex.exec(input)) !== null) {
-    const key = match[1].toLowerCase().trim();
-    const value = (match[2] || match[3] || match[4] || "").trim();
-    if (value && !tokens[key]) {
-      tokens[key] = key === "severity" ? (severityMap[value.toLowerCase()] || value) : value;
-    }
-    cleaned = cleaned.replace(match[0], "");
-  }
-
-  const timeKeywords = ["today", "yesterday", "last1h", "last4h", "last6h", "last12h", "last24h", "last7d", "last30d"];
-  const remaining = cleaned.trim();
-  if (remaining) {
-    remaining.split(/\s+/).forEach((word) => {
-      const w = word.trim();
-      if (!w) return;
-      if (timeKeywords.includes(w.toLowerCase())) return;
-      if (["AND", "OR", "NOT"].includes(w.toUpperCase())) {
-        textChunks.push({ type: "operator", value: w.toUpperCase() });
-        return;
-      }
-      if (w.startsWith('"') && w.endsWith('"')) {
-        keywords.push(w.slice(1, -1));
-        textChunks.push({ type: "quoted", value: w.slice(1, -1) });
-      } else {
-        keywords.push(w);
-        textChunks.push({ type: "keyword", value: w });
-      }
-    });
-  }
-
-  const hasBoolean = /(^|\s+)(AND|OR|NOT)(\s+|$)/i.test(input);
-
-  return { tokens, keywords, textChunks, raw: input, hasBoolean };
-};
-
-// ===================================================================
-// SUGGESTIONS DATA
-// ===================================================================
-const FIELD_SUGGESTIONS = [
-  { value: "host:", label: "host", description: "Filter by hostname" },
-  { value: "severity:", label: "severity", description: "Filter by severity level" },
-  { value: "eventid:", label: "eventid", description: "Filter by Windows Event ID" },
-  { value: "process:", label: "process", description: "Filter by process name" },
-  { value: "pid:", label: "pid", description: "Filter by process ID" },
-  { value: "user:", label: "user", description: "Filter by username" },
-  { value: "mitre:", label: "mitre", description: "Filter by MITRE ATT&CK ID" },
-  { value: "ioc:", label: "ioc", description: "Search for Indicator of Compromise" },
-  { value: "status:", label: "status", description: "Filter by alert status" },
+const TIME_KEYWORDS = [
+  "today",
+  "yesterday",
+  "last1h",
+  "last4h",
+  "last6h",
+  "last12h",
+  "last24h",
+  "last7d",
+  "last30d",
 ];
 
-const TIME_KEYWORDS = ["today", "last1h", "last24h", "last7d", "last30d"];
-
-// Syntax help examples
 const SYNTAX_EXAMPLES = [
-  { label: "Free text", example: "powershell" },
-  { label: "Event ID", example: "eventid=4688" },
-  { label: "Host", example: "host=MANI" },
-  { label: "Process", example: "process=powershell.exe" },
-  { label: "Severity", example: "severity=High" },
-  { label: "MITRE", example: "mitre=T1059.001" },
-  { label: "Combined", example: "host=MANI AND eventid=4688" },
-  { label: "IOC", example: "192.168.1.50" },
-  { label: "Time range", example: "host=MANI last24h" },
+  {
+    label: "Free text",
+    example: "powershell",
+  },
+  {
+    label: "Event ID",
+    example: "event_id:4688",
+  },
+  {
+    label: "Host",
+    example: "host:WORKSTATION01",
+  },
+  {
+    label: "Process",
+    example: "process:powershell.exe",
+  },
+  {
+    label: "Severity",
+    example: "severity:critical",
+  },
+  {
+    label: "MITRE",
+    example: "mitre:T1059.001",
+  },
+  {
+    label: "Combined",
+    example: "host:WORKSTATION01 AND event_id:4688",
+  },
+  {
+    label: "IOC",
+    example: "source_ip:192.168.1.50",
+  },
+  {
+    label: "Time range",
+    example: "host:WORKSTATION01 last24h",
+  },
 ];
 
-// ===================================================================
-// ENTERPRISE SEARCH BAR COMPONENT
-// ===================================================================
+/* ============================================================
+   HELPERS
+   ============================================================ */
+
+/**
+ * Get the token currently under the cursor.
+ *
+ * Example:
+ *
+ * "host:PC01 event_id:4624"
+ *                    ^
+ *
+ * returns the second token.
+ */
+function getActiveToken(text, cursorPosition) {
+  const cursor = Number.isInteger(cursorPosition)
+    ? cursorPosition
+    : text.length;
+
+  const before = text.slice(0, cursor);
+
+  const start = before.lastIndexOf(" ") + 1;
+
+  let end = text.indexOf(" ", cursor);
+
+  if (end === -1) {
+    end = text.length;
+  }
+
+  return {
+    text: text.slice(start, end),
+    start,
+    end,
+  };
+}
+
+/**
+ * Determine whether the cursor is currently inside a field:value
+ * expression.
+ *
+ * Examples:
+ *
+ * event_id:
+ * event_id:46
+ * username:adm
+ */
+function getQueryContext(text, cursorPosition) {
+  const token = getActiveToken(text, cursorPosition);
+
+  const tokenText = token.text;
+
+  const colonIndex = tokenText.indexOf(":");
+
+  if (colonIndex === -1) {
+    return {
+      type: "field",
+      field: null,
+      token,
+      valueStart: token.start,
+    };
+  }
+
+  const field = tokenText
+    .slice(0, colonIndex)
+    .trim()
+    .toLowerCase();
+
+  const value = tokenText.slice(colonIndex + 1);
+
+  return {
+    type: "value",
+    field,
+    value,
+    token,
+    fieldStart: token.start,
+    colonIndex: token.start + colonIndex,
+    valueStart: token.start + colonIndex + 1,
+  };
+}
+
+/**
+ * Insert a field suggestion.
+ *
+ * IMPORTANT:
+ * This function always produces:
+ *
+ * field:
+ *
+ * never:
+ *
+ * field::
+ */
+function insertFieldSuggestion(text, cursorPosition, fieldName) {
+  const context = getQueryContext(text, cursorPosition);
+
+  const field = String(fieldName || "")
+    .replace(/:$/, "")
+    .trim();
+
+  if (!field) {
+    return {
+      text,
+      cursor: cursorPosition,
+    };
+  }
+
+  const token = context.token;
+
+  const before = text.slice(0, token.start);
+  const after = text.slice(token.end);
+
+  const newText = `${before}${field}:${after}`;
+
+  const newCursor = before.length + field.length + 1;
+
+  return {
+    text: newText,
+    cursor: newCursor,
+  };
+}
+
+/**
+ * Insert a value suggestion.
+ *
+ * Example:
+ *
+ * host:PC
+ *
+ * selecting SERVER01 gives:
+ *
+ * host:SERVER01
+ *
+ * It only replaces the value portion.
+ */
+function insertValueSuggestion(
+  text,
+  cursorPosition,
+  value,
+  fieldOverride = null
+) {
+  const context = getQueryContext(text, cursorPosition);
+
+  const rawValue = String(value ?? "")
+    .trim()
+    .replace(/^:/, "");
+
+  if (!rawValue) {
+    return {
+      text,
+      cursor: cursorPosition,
+    };
+  }
+
+  let field = fieldOverride || context.field;
+
+  if (!field) {
+    return {
+      text,
+      cursor: cursorPosition,
+    };
+  }
+
+  field = String(field)
+    .replace(/:$/, "")
+    .trim();
+
+  const token = context.token;
+
+  let start;
+  let end;
+
+  if (context.type === "value") {
+    start = context.valueStart;
+    end = token.end;
+  } else {
+    start = token.start;
+    end = token.end;
+  }
+
+  const before = text.slice(0, start);
+  const after = text.slice(end);
+
+  /*
+   * If the user already has:
+   *
+   * username:
+   *
+   * start points AFTER the colon.
+   *
+   * Therefore we insert ONLY the value.
+   *
+   * This is the key fix for username::value.
+   */
+  let newText;
+
+  if (context.type === "value") {
+    newText = `${before}${rawValue}${after}`;
+  } else {
+    newText = `${before}${field}:${rawValue}${after}`;
+  }
+
+  const newCursor = before.length + rawValue.length;
+
+  return {
+    text: newText,
+    cursor: newCursor,
+  };
+}
+
+/**
+ * Apply a suggestion to the query.
+ *
+ * ALL suggestion paths should use this function.
+ */
+function applySuggestionToQuery(
+  text,
+  cursorPosition,
+  item
+) {
+  if (!item) {
+    return {
+      text,
+      cursor: cursorPosition,
+    };
+  }
+
+  const context = getQueryContext(text, cursorPosition);
+
+  /*
+   * FIELD suggestion
+   */
+  if (
+    item._type === "field" ||
+    item.type === "field"
+  ) {
+    return insertFieldSuggestion(
+      text,
+      cursorPosition,
+      item.label || item.value
+    );
+  }
+
+  /*
+   * TIME suggestion
+   */
+  if (item._type === "time") {
+    const token = context.token;
+
+    const before = text.slice(0, token.start);
+    const after = text.slice(token.end);
+
+    const value = String(item.value || item.label);
+
+    return {
+      text: `${before}${value}${after}`,
+      cursor: before.length + value.length,
+    };
+  }
+
+  /*
+   * VALUE / LIVE / AUTOCOMPLETE suggestion
+   */
+  const rawValue =
+    item.rawValue ??
+    item.value ??
+    item.label ??
+    "";
+
+  return insertValueSuggestion(
+    text,
+    cursorPosition,
+    rawValue,
+    item.field || context.field
+  );
+}
+
+/* ============================================================
+   COMPONENT
+   ============================================================ */
+
 function EnterpriseSearchBar({
   value = "",
   onChange,
@@ -123,527 +386,1444 @@ function EnterpriseSearchBar({
   totalResults = null,
 }) {
   const [queryStr, setQueryStr] = useState(value);
+
   const [isFocused, setIsFocused] = useState(false);
-  const [selectedSuggestion, setSelectedSuggestion] = useState(0);
+
+  const [selectedSuggestion, setSelectedSuggestion] =
+    useState(0);
+
   const [activeField, setActiveField] = useState(null);
+
   const [searching, setSearching] = useState(false);
-  const [liveSuggestions, setLiveSuggestions] = useState(null);
-  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+
+  const [liveSuggestions, setLiveSuggestions] =
+    useState(null);
+
+  const [suggestionsLoading, setSuggestionsLoading] =
+    useState(false);
+
   const [showHelp, setShowHelp] = useState(false);
+
   const [serverHistory, setServerHistory] = useState([]);
 
+  const [validationErrors, setValidationErrors] =
+    useState([]);
+
+  const [showPreview, setShowPreview] =
+    useState(false);
+
   const inputRef = useRef(null);
+
   const containerRef = useRef(null);
+
   const suggestionsFetchRef = useRef(null);
+
   const helpRef = useRef(null);
 
-  // Sync external value
+  /* ==========================================================
+     SYNC EXTERNAL VALUE
+     ========================================================== */
+
   useEffect(() => {
-    const timer = setTimeout(() => {
-      if (value !== undefined && value !== queryStr) {
-        setQueryStr(value);
-      }
-    }, 0);
-    return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (value !== undefined && value !== queryStr) {
+      setQueryStr(value);
+    }
   }, [value]);
 
-  // Parse query on change + detect active field
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (queryStr.endsWith(":") || queryStr.endsWith("=")) {
-        const lastColon = queryStr.slice(0, -1).lastIndexOf(":");
-        const lastEq = queryStr.slice(0, -1).lastIndexOf("=");
-        const splitIdx = Math.max(lastColon, lastEq);
-        if (splitIdx >= 0) {
-          const field = queryStr.slice(Math.max(queryStr.lastIndexOf(" ", splitIdx - 1) + 1, 0), splitIdx).trim();
-          setActiveField(field.toLowerCase());
-        } else {
-          setActiveField(null);
+  /* ==========================================================
+     QUERY UPDATE
+     ========================================================== */
+
+  const updateQuery = useCallback(
+    (text, cursorPosition = null) => {
+      setQueryStr(text);
+
+      onChange?.(text);
+
+      requestAnimationFrame(() => {
+        if (!inputRef.current) return;
+
+        inputRef.current.focus();
+
+        const position =
+          cursorPosition === null
+            ? text.length
+            : cursorPosition;
+
+        try {
+          inputRef.current.setSelectionRange(
+            position,
+            position
+          );
+        } catch {
+          // Ignore selection errors.
         }
-      } else {
-        setActiveField(null);
-      }
-    }, 0);
-    return () => clearTimeout(timer);
+      });
+    },
+    [onChange]
+  );
+
+  /* ==========================================================
+     ACTIVE FIELD DETECTION
+     ========================================================== */
+
+  const detectActiveField = useCallback(() => {
+    const input = inputRef.current;
+
+    const cursorPosition =
+      input?.selectionStart ?? queryStr.length;
+
+    const context = getQueryContext(
+      queryStr,
+      cursorPosition
+    );
+
+    if (context.type === "value" && context.field) {
+      setActiveField(context.field);
+    } else {
+      setActiveField(null);
+    }
+
+    return context;
   }, [queryStr]);
 
-  // Load server-side search history on mount
   useEffect(() => {
-    let cancelled = false;
-    async function loadHistory() {
-      try {
-        const res = await api.get("/search/history");
-        if (!cancelled && res.data?.history) {
-          setServerHistory(res.data.history.map((h) => h.query));
-        }
-      } catch {
-        // Fall back to empty — history is non-critical
-      }
-    }
-    loadHistory();
-    return () => { cancelled = true; };
-  }, []);
+    detectActiveField();
+  }, [queryStr, detectActiveField]);
 
-  // Also refresh history when a search is executed (triggered by queryStr changes after search)
+  /* ==========================================================
+     VALIDATION
+     ========================================================== */
+
+  useEffect(() => {
+    if (!queryStr.trim()) {
+      setValidationErrors([]);
+      return;
+    }
+
+    try {
+      const parsed = parseQuery(queryStr);
+
+      const validation = validateQuery(parsed);
+
+      setValidationErrors(
+        validation?.errors || []
+      );
+    } catch (error) {
+      console.error(
+        "[SOCRA] Query validation error:",
+        error
+      );
+
+      setValidationErrors([]);
+    }
+  }, [queryStr]);
+
+  /* ==========================================================
+     HISTORY
+     ========================================================== */
+
   const refreshHistory = useCallback(async () => {
     try {
       const res = await api.get("/search/history");
+
       if (res.data?.history) {
-        setServerHistory(res.data.history.map((h) => h.query));
+        setServerHistory(
+          res.data.history
+            .map((item) => item.query)
+            .filter(Boolean)
+        );
       }
     } catch {
-      // non-critical
+      // Search history is non-critical.
     }
   }, []);
 
-  // Use only server-side history (no localStorage fallback)
-  const history = serverHistory;
+  useEffect(() => {
+    let cancelled = false;
 
-  // ===========================================================
-  // LIVE SUGGESTIONS: fetched from the backend (debounced)
-  // ===========================================================
+    async function loadHistory() {
+      try {
+        const res = await api.get("/search/history");
+
+        if (
+          !cancelled &&
+          Array.isArray(res.data?.history)
+        ) {
+          setServerHistory(
+            res.data.history
+              .map((item) => item.query)
+              .filter(Boolean)
+          );
+        }
+      } catch {
+        // Ignore history errors.
+      }
+    }
+
+    loadHistory();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /* ==========================================================
+     CLEAR SEARCH
+     ========================================================== */
+
+  const clearSearch = useCallback(() => {
+    updateQuery("", 0);
+
+    setValidationErrors([]);
+    setLiveSuggestions(null);
+    setActiveField(null);
+
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+    });
+  }, [updateQuery]);
+
+  /* ==========================================================
+     BACKEND LIVE SUGGESTIONS
+     ========================================================== */
+
   useEffect(() => {
     if (suggestionsFetchRef.current) {
       clearTimeout(suggestionsFetchRef.current);
     }
 
     if (!queryStr.trim()) {
-      suggestionsFetchRef.current = setTimeout(() => setLiveSuggestions(null), 0);
-      return () => {
-        if (suggestionsFetchRef.current) clearTimeout(suggestionsFetchRef.current);
-      };
-    }
-
-    suggestionsFetchRef.current = setTimeout(async () => {
-      setSuggestionsLoading(true);
-      try {
-        const lastWord = queryStr.split(/\s+/).pop() || "";
-        const res = await api.get("/search/suggestions", {
-          params: { q: lastWord.toLowerCase() },
-        });
-        setLiveSuggestions(res.data || {});
-      } catch {
-        setLiveSuggestions(null);
-      } finally {
-        setSuggestionsLoading(false);
-      }
-    }, 250);
-
-    return () => {
-      if (suggestionsFetchRef.current) clearTimeout(suggestionsFetchRef.current);
-    };
-  }, [queryStr]);
-
-  // ===========================================================
-  // Suggestions: field syntax + live backend values + history
-  // ===========================================================
-  const suggestions = useMemo(() => {
-    if (!queryStr.trim()) {
-      // Show field syntax suggestions when input is empty (no empty "Recent Searches")
-      return { type: "syntax", items: FIELD_SUGGESTIONS.slice(0, 6) };
-    }
-
-    const lastWord = queryStr.split(/\s+/).pop() || "";
-    const trimmed = lastWord.toLowerCase();
-
-    if (activeField) {
-      let fieldKey = activeField;
-      if (fieldKey === "eventid") fieldKey = "event_ids";
-      if (fieldKey === "mitre") fieldKey = "mitre_ids";
-      if (fieldKey === "host") fieldKey = "hosts";
-      if (fieldKey === "user") fieldKey = "users";
-      if (fieldKey === "process") fieldKey = "processes";
-      if (fieldKey === "pid") fieldKey = "pids";
-      if (fieldKey === "ioc") fieldKey = "ips";
-      if (fieldKey === "severity") fieldKey = "severities";
-      if (fieldKey === "status") fieldKey = "statuses";
-
-      if (liveSuggestions && liveSuggestions[fieldKey]) {
-        const values = liveSuggestions[fieldKey].filter((v) =>
-          isCleanSuggestion(v) && v.toLowerCase().startsWith(trimmed)
-        );
-        if (values.length > 0) {
-          return {
-            type: "values",
-            items: values.map((v) => ({ value: `${activeField}:${v}`, label: v })),
-          };
-        }
-      }
-    }
-
-    const fieldItems = FIELD_SUGGESTIONS.filter(
-      (f) => f.value.toLowerCase().includes(trimmed) || f.label.toLowerCase().includes(trimmed)
-    );
-    const timeItems = TIME_KEYWORDS.filter((t) => t.includes(trimmed))
-      .map((t) => ({ value: t, label: t, description: "Time range shortcut" }));
-    const historyItems = history
-      .filter((h) => h.toLowerCase().includes(trimmed))
-      .slice(0, 5)
-      .map((h) => ({ value: h, label: h, description: "Recent search" }));
-
-    const liveItems = [];
-    if (liveSuggestions) {
-      const liveCategories = {
-        hosts: { icon: "host", label: "Host" },
-        users: { icon: "user", label: "User" },
-        processes: { icon: "process", label: "Process" },
-        event_ids: { icon: "eventid", label: "Event" },
-        mitre_ids: { icon: "mitre", label: "MITRE" },
-        ips: { icon: "ioc", label: "IP" },
-      };
-      Object.entries(liveCategories).forEach(([key, cfg]) => {
-        const items = liveSuggestions[key];
-        if (items && items.length > 0) {
-          items.forEach((item) => {
-            if (isCleanSuggestion(item)) {
-              liveItems.push({
-                value: item,
-                label: item,
-                description: cfg.label,
-                _type: "live",
-                _icon: cfg.icon,
-              });
-            }
-          });
-        }
-      });
-    }
-
-    const all = [
-      ...fieldItems.map((f) => ({ ...f, _type: "field" })),
-      ...timeItems.map((t) => ({ ...t, _type: "time" })),
-      ...liveItems.slice(0, 10),
-      ...historyItems.map((h) => ({ ...h, _type: "history" })),
-    ];
-
-    return { type: "mixed", items: all.slice(0, 12) };
-  }, [queryStr, activeField, history, liveSuggestions]);
-
-  // Execute search
-  const executeSearch = useCallback(async (overrideQuery) => {
-    const q = overrideQuery || queryStr;
-    const parsed = parseEnterpriseQuery(q);
-
-    setSearching(true);
-    setTimeout(() => setSearching(false), 600);
-
-    if (onSearchSubmit) {
-      onSearchSubmit({
-        raw: q,
-        tokens: parsed.tokens,
-        keywords: parsed.keywords,
-        hasBoolean: parsed.hasBoolean,
-      });
-    }
-
-    // Save to server-side history (non-blocking, after search is triggered)
-    api.post("/search/history", { query: q })
-      .then(() => refreshHistory())
-      .catch(() => {
-        try {
-          let items = JSON.parse(localStorage.getItem("socra-search-history") || "[]");
-          items = [q, ...items.filter((x) => x !== q)].slice(0, 20);
-          localStorage.setItem("socra-search-history", JSON.stringify(items));
-        } catch {
-          // ignore
-        }
-      });
-  }, [queryStr, onSearchSubmit, refreshHistory]);
-
-  const updateQuery = useCallback((text) => {
-    setQueryStr(text);
-    if (onChange) onChange(text);
-  }, [onChange]);
-
-  const clearSearch = useCallback(() => {
-    updateQuery("");
-    if (inputRef.current) inputRef.current.focus();
-  }, [updateQuery]);
-
-  const handleKeyDown = useCallback((e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === "k") {
-      e.preventDefault();
-      if (inputRef.current) inputRef.current.focus();
+      setLiveSuggestions(null);
+      setSuggestionsLoading(false);
       return;
     }
 
-    switch (e.key) {
-      case "Enter":
-        e.preventDefault();
-        if (suggestions && suggestions.items && suggestions.items.length > 0 && selectedSuggestion >= 0) {
-          const item = suggestions.items[selectedSuggestion];
-          if (item) {
-            updateQuery(item.value);
-            setSelectedSuggestion(0);
-            // If it's a history item or live data value, execute search immediately
-            if (item._type === "history" || item._type === "live") {
-              setTimeout(() => executeSearch(item.value), 0);
-            }
+    suggestionsFetchRef.current = setTimeout(
+      async () => {
+        setSuggestionsLoading(true);
+
+        try {
+          const input = inputRef.current;
+
+          const cursorPosition =
+            input?.selectionStart ?? queryStr.length;
+
+          const context = getQueryContext(
+            queryStr,
+            cursorPosition
+          );
+
+          /*
+           * Only ask backend for value suggestions when
+           * we actually have a field.
+           */
+          if (
+            context.type !== "value" ||
+            !context.field
+          ) {
+            setLiveSuggestions(null);
+            setSuggestionsLoading(false);
             return;
           }
+
+          const valuePrefix =
+            context.value || "";
+
+          const res = await api.get(
+            "/search/suggestions",
+            {
+              params: {
+                q: valuePrefix.toLowerCase(),
+              },
+            }
+          );
+
+          if (res.data) {
+            setLiveSuggestions(res.data);
+          } else {
+            setLiveSuggestions(null);
+          }
+        } catch (error) {
+          console.warn(
+            "[SOCRA] Suggestions request failed:",
+            error
+          );
+
+          setLiveSuggestions(null);
+        } finally {
+          setSuggestionsLoading(false);
         }
+      },
+      250
+    );
+
+    return () => {
+      if (suggestionsFetchRef.current) {
+        clearTimeout(suggestionsFetchRef.current);
+      }
+    };
+  }, [queryStr]);
+
+  /* ==========================================================
+     BUILD SUGGESTIONS
+     ========================================================== */
+
+  const suggestions = useMemo(() => {
+    const input = inputRef.current;
+
+    const cursorPosition =
+      input?.selectionStart ?? queryStr.length;
+
+    const context = getQueryContext(
+      queryStr,
+      cursorPosition
+    );
+
+    const items = [];
+
+    /* --------------------------------------------------------
+       FIELD SUGGESTIONS
+       -------------------------------------------------------- */
+
+    if (
+      context.type === "field" &&
+      context.token.text
+    ) {
+      const prefix =
+        context.token.text.toLowerCase();
+
+      FIELD_SUGGESTIONS.forEach((item) => {
+        if (
+          item.label
+            .toLowerCase()
+            .startsWith(prefix)
+        ) {
+          items.push(item);
+        }
+      });
+    }
+
+    /*
+     * Empty query → show fields.
+     */
+    if (
+      context.type === "field" &&
+      !context.token.text
+    ) {
+      items.push(...FIELD_SUGGESTIONS);
+    }
+
+    /* --------------------------------------------------------
+       VALUE SUGGESTIONS
+       -------------------------------------------------------- */
+
+    if (
+      context.type === "value" &&
+      context.field
+    ) {
+      const prefix =
+        context.value?.toLowerCase() || "";
+
+      /*
+       * Backend response can have several categories.
+       */
+      if (liveSuggestions) {
+        const categories = [
+          "values",
+          "usernames",
+          "users",
+          "event_ids",
+          "ips",
+          "hosts",
+          "processes",
+          "process_names",
+          "statuses",
+        ];
+
+        for (const category of categories) {
+          const values =
+            liveSuggestions?.[category];
+
+          if (!Array.isArray(values)) {
+            continue;
+          }
+
+          for (const value of values) {
+            if (value === null || value === undefined) {
+              continue;
+            }
+
+            const stringValue = String(value);
+
+            if (
+              prefix &&
+              !stringValue
+                .toLowerCase()
+                .includes(prefix)
+            ) {
+              continue;
+            }
+
+            if (!isCleanSuggestion(stringValue)) {
+              continue;
+            }
+
+            items.push({
+              value: stringValue,
+              rawValue: stringValue,
+              label: stringValue,
+              field: context.field,
+              description:
+                `${context.field} value`,
+              _type: "live",
+            });
+          }
+        }
+      }
+
+      /*
+       * Also show useful static values.
+       */
+      if (
+        context.field === "event_id" ||
+        context.field === "eventid"
+      ) {
+        const eventIds = [
+          "4624",
+          "4625",
+          "4634",
+          "4647",
+          "4648",
+          "4672",
+          "4720",
+          "4722",
+        ];
+
+        for (const id of eventIds) {
+          if (
+            !prefix ||
+            id.includes(prefix)
+          ) {
+            items.push({
+              value: id,
+              rawValue: id,
+              label: id,
+              field: context.field,
+              description:
+                "Windows Event ID",
+              _type: "live",
+            });
+          }
+        }
+      }
+    }
+
+    /* --------------------------------------------------------
+       TIME SUGGESTIONS
+       -------------------------------------------------------- */
+
+    if (
+      context.type === "field" &&
+      !context.token.text
+    ) {
+      for (const keyword of TIME_KEYWORDS) {
+        items.push({
+          value: keyword,
+          label: keyword,
+          description: "Time filter",
+          _type: "time",
+        });
+      }
+    }
+
+    /* --------------------------------------------------------
+       HISTORY
+       -------------------------------------------------------- */
+
+    if (
+      context.type === "field" &&
+      !context.token.text &&
+      serverHistory.length
+    ) {
+      serverHistory.slice(0, 5).forEach((historyItem) => {
+        items.push({
+          value: historyItem,
+          label: historyItem,
+          description: "Previous search",
+          _type: "history",
+        });
+      });
+    }
+
+    /*
+     * Remove duplicates.
+     */
+    const seen = new Set();
+
+    const uniqueItems = items.filter((item) => {
+      const key = `${item._type}:${item.value}`;
+
+      if (seen.has(key)) {
+        return false;
+      }
+
+      seen.add(key);
+      return true;
+    });
+
+    return {
+      type: "mixed",
+      items: uniqueItems.slice(0, 12),
+    };
+  }, [
+    queryStr,
+    activeField,
+    liveSuggestions,
+    serverHistory,
+  ]);
+
+  /* ==========================================================
+     SELECT SUGGESTION
+     ========================================================== */
+
+  const selectSuggestion = useCallback(
+    (item) => {
+      if (!item) return;
+
+      const input = inputRef.current;
+
+      const cursorPosition =
+        input?.selectionStart ?? queryStr.length;
+
+      const result = applySuggestionToQuery(
+        queryStr,
+        cursorPosition,
+        item
+      );
+
+      /*
+       * IMPORTANT:
+       *
+       * Never do:
+       *
+       * setQueryStr(item.value)
+       *
+       * That was the reason selecting 4624 could replace
+       * "event_id:4" with only "4624".
+       */
+      updateQuery(
+        result.text,
+        result.cursor
+      );
+
+      setSelectedSuggestion(0);
+
+      /*
+       * History selection should execute the query.
+       */
+      if (item._type === "history") {
+        setTimeout(() => {
+          executeSearch(result.text);
+        }, 0);
+      }
+    },
+    [queryStr, updateQuery]
+  );
+
+  /* ==========================================================
+     SEARCH
+     ========================================================== */
+
+  const executeSearch = useCallback(
+    async (overrideQuery = null) => {
+      const q =
+        overrideQuery !== null
+          ? overrideQuery
+          : queryStr;
+
+      if (!q.trim()) {
+        return;
+      }
+
+      try {
+        const parsed = parseQuery(q);
+
+        const validation =
+          validateQuery(parsed);
+
+        if (!validation.valid) {
+          setValidationErrors(
+            validation.errors || []
+          );
+          return;
+        }
+
+        setValidationErrors([]);
+        setSearching(true);
+
+        const backendQuery =
+          queryToBackend(q);
+
+        onSearchSubmit?.({
+          raw: q,
+
+          tokens:
+            parsed.tokens || {},
+
+          keywords:
+            parsed.keywords || [],
+
+          hasBoolean:
+            parsed.hasBoolean || false,
+
+          filters:
+            backendQuery.filters,
+
+          formatted_query:
+            backendQuery.formatted_query,
+        });
+
+        /*
+         * Save search history.
+         */
+        try {
+          await api.post(
+            "/search/history",
+            {
+              query: q,
+            }
+          );
+
+          await refreshHistory();
+        } catch {
+          /*
+           * Local fallback.
+           */
+          try {
+            let items = JSON.parse(
+              localStorage.getItem(
+                "socra-search-history"
+              ) || "[]"
+            );
+
+            items = [
+              q,
+              ...items.filter(
+                (item) => item !== q
+              ),
+            ].slice(0, 20);
+
+            localStorage.setItem(
+              "socra-search-history",
+              JSON.stringify(items)
+            );
+          } catch {
+            // Ignore local storage errors.
+          }
+        }
+
+        setTimeout(() => {
+          setSearching(false);
+        }, 500);
+      } catch (error) {
+        console.error(
+          "[SOCRA] Search execution error:",
+          error
+        );
+
+        setSearching(false);
+      }
+    },
+    [
+      queryStr,
+      onSearchSubmit,
+      refreshHistory,
+    ]
+  );
+
+  /* ==========================================================
+     KEYBOARD HANDLING
+     ========================================================== */
+
+  const handleKeyDown = useCallback(
+    (e) => {
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        e.key.toLowerCase() === "k"
+      ) {
+        e.preventDefault();
+
+        inputRef.current?.focus();
+
+        return;
+      }
+
+      const hasSuggestions =
+        isFocused &&
+        suggestions?.items?.length > 0;
+
+      if (hasSuggestions) {
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+
+          setSelectedSuggestion(
+            (current) =>
+              (current + 1) %
+              suggestions.items.length
+          );
+
+          return;
+        }
+
+        if (e.key === "ArrowUp") {
+          e.preventDefault();
+
+          setSelectedSuggestion(
+            (current) =>
+              current <= 0
+                ? suggestions.items.length - 1
+                : current - 1
+          );
+
+          return;
+        }
+
+        if (
+          e.key === "Enter" ||
+          e.key === "Tab"
+        ) {
+          e.preventDefault();
+
+          const item =
+            suggestions.items[
+              selectedSuggestion
+            ];
+
+          if (item) {
+            selectSuggestion(item);
+          }
+
+          return;
+        }
+      }
+
+      if (e.key === "Enter") {
+        e.preventDefault();
+
         executeSearch();
-        break;
-      case "Escape":
+
+        return;
+      }
+
+      if (e.key === "Escape") {
+        e.preventDefault();
+
         if (queryStr) {
           clearSearch();
         } else {
           setIsFocused(false);
           setShowHelp(false);
-          if (inputRef.current) inputRef.current.blur();
+          inputRef.current?.blur();
         }
-        break;
-      case "ArrowDown":
-        e.preventDefault();
-        if (suggestions && suggestions.items) {
-          setSelectedSuggestion((prev) => Math.min(prev + 1, suggestions.items.length - 1));
-        }
-        break;
-      case "ArrowUp":
-        e.preventDefault();
-        setSelectedSuggestion((prev) => Math.max(prev - 1, 0));
-        break;
-      case "Tab":
-        e.preventDefault();
-        if (suggestions && suggestions.items && suggestions.items.length > 0) {
-          const idx = Math.max(0, selectedSuggestion);
-          const item = suggestions.items[idx];
-          if (item) {
-            updateQuery(item.value);
-            setSelectedSuggestion(0);
-          }
-        }
-        break;
-      default:
-        break;
-    }
-  }, [queryStr, suggestions, selectedSuggestion, executeSearch, updateQuery, clearSearch]);
 
-  // Global Ctrl+K handler
+        return;
+      }
+    },
+    [
+      isFocused,
+      suggestions,
+      selectedSuggestion,
+      selectSuggestion,
+      executeSearch,
+      queryStr,
+      clearSearch,
+    ]
+  );
+
+  /* ==========================================================
+     GLOBAL CTRL+K
+     ========================================================== */
+
   useEffect(() => {
     const handler = (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === "k") {
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        e.key.toLowerCase() === "k"
+      ) {
         e.preventDefault();
-        if (inputRef.current) inputRef.current.focus();
+
+        inputRef.current?.focus();
       }
     };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
+
+    window.addEventListener(
+      "keydown",
+      handler
+    );
+
+    return () => {
+      window.removeEventListener(
+        "keydown",
+        handler
+      );
+    };
   }, []);
 
-  // Click outside closes dropdowns
+  /* ==========================================================
+     CLICK OUTSIDE
+     ========================================================== */
+
   useEffect(() => {
     const handler = (e) => {
-      if (containerRef.current && !containerRef.current.contains(e.target)) {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(
+          e.target
+        )
+      ) {
         setIsFocused(false);
         setShowHelp(false);
       }
-      if (helpRef.current && !helpRef.current.contains(e.target)) {
-        setShowHelp(false);
-      }
     };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+
+    document.addEventListener(
+      "mousedown",
+      handler
+    );
+
+    return () => {
+      document.removeEventListener(
+        "mousedown",
+        handler
+      );
+    };
   }, []);
 
-  const renderSuggestionItem = (item, index) => {
-    const isSelected = selectedSuggestion === index;
-    let icon = null;
-    let typeLabel = "";
+  /* ==========================================================
+     INPUT CHANGE
+     ========================================================== */
 
-    if (item._type === "field") {
-      icon = <Terminal size={12} className="text-cyan-400 shrink-0" />;
-      typeLabel = "FIELD";
-    } else if (item._type === "time") {
-      icon = <Clock3 size={12} className="text-amber-400 shrink-0" />;
-      typeLabel = "TIME";
-    } else if (item._type === "live") {
-      const catIcons = {
-        host: <Monitor size={12} className="text-emerald-400 shrink-0" />,
-        user: <User size={12} className="text-blue-400 shrink-0" />,
-        process: <Cpu size={12} className="text-amber-400 shrink-0" />,
-        eventid: <Terminal size={12} className="text-cyan-400 shrink-0" />,
-        mitre: <Shield size={12} className="text-violet-400 shrink-0" />,
-        ioc: <Globe size={12} className="text-rose-400 shrink-0" />,
-      };
-      icon = catIcons[item._icon] || <Sparkles size={12} className="text-slate-400 shrink-0" />;
-      typeLabel = item.description || "DATA";
-    } else if (item._type === "history") {
-      icon = <History size={12} className="text-slate-400 shrink-0" />;
-      typeLabel = "HISTORY";
+  const handleInputChange = useCallback(
+    (e) => {
+      const text = e.target.value;
+
+      const cursor =
+        e.target.selectionStart ?? text.length;
+
+      setQueryStr(text);
+
+      onChange?.(text);
+
+      const context = getQueryContext(
+        text,
+        cursor
+      );
+
+      if (
+        context.type === "value" &&
+        context.field
+      ) {
+        setActiveField(
+          context.field
+        );
+      } else {
+        setActiveField(null);
+      }
+
+      setSelectedSuggestion(0);
+    },
+    [onChange]
+  );
+
+  /* ==========================================================
+     INPUT CLICK / CURSOR
+     ========================================================== */
+
+  const handleCursorChange = useCallback(() => {
+    detectActiveField();
+
+    setSelectedSuggestion(0);
+  }, [detectActiveField]);
+
+  /* ==========================================================
+     PREVIEW
+     ========================================================== */
+
+  const parsedQuery = useMemo(() => {
+    try {
+      return parseQuery(queryStr);
+    } catch {
+      return null;
+    }
+  }, [queryStr]);
+
+  const previewFilters = useMemo(() => {
+    if (!queryStr.trim()) {
+      return [];
     }
 
-    // History items execute search immediately on click
-    const isHistoryItem = item._type === "history";
+    const tokens = {};
 
-    return (
-      <button
-        key={item.value + item.label}
-        type="button"
-        onMouseDown={() => {
-          updateQuery(item.value);
-          setSelectedSuggestion(0);
-          if (isHistoryItem) {
-            // Execute search immediately with the exact query value
-            setTimeout(() => executeSearch(item.value), 0);
-          }
-        }}
-        className={"w-full px-3.5 py-2 text-left text-xs transition-all flex items-center gap-2.5 " +
-          (isSelected
-            ? "bg-cyan-600/20 text-cyan-300 border-l-2 border-cyan-500"
-            : "text-slate-300 hover:bg-slate-800/60 border-l-2 border-transparent")}
-      >
-        {icon && <span className="shrink-0">{icon}</span>}
-        <span className="flex-1 min-w-0 font-semibold truncate">{item.label}</span>
-        {item.description && item._type !== "live" && (
-          <span className="text-[10px] text-slate-500 truncate hidden sm:block">{item.description}</span>
-        )}
-        {typeLabel && (
-          <span className={"text-[9px] font-bold uppercase tracking-wider shrink-0 " +
-            (isSelected ? "text-cyan-500" : "text-slate-600")}>{typeLabel}</span>
-        )}
-      </button>
+    /*
+     * Simple UI preview parser.
+     */
+    const fieldRegex =
+      /(\w+):(?:"([^"]*)"|\[([^\]]*)\]|(\S+))/g;
+
+    let match;
+
+    while (
+      (match =
+        fieldRegex.exec(queryStr)) !== null
+    ) {
+      tokens[
+        match[1].toLowerCase()
+      ] =
+        match[2] ??
+        match[3] ??
+        match[4];
+    }
+
+    return Object.entries(tokens).map(
+      ([field, filterValue]) => ({
+        field,
+        value: filterValue,
+      })
     );
-  };
+  }, [queryStr]);
 
-  const showDropdown = isFocused && suggestions && suggestions.items && suggestions.items.length > 0;
+  /* ==========================================================
+     DROPDOWN VISIBILITY
+     ========================================================== */
+
+  const showDropdown =
+    isFocused &&
+    suggestions?.items?.length > 0;
+
+  /* ==========================================================
+     RENDER
+     ========================================================== */
 
   return (
-    <form onSubmit={(e) => { e.preventDefault(); executeSearch(); }} ref={containerRef} className="w-full font-mono relative z-50">
-      {/* PRIMARY SEARCH FIELD */}
+    <form
+      ref={containerRef}
+      onSubmit={(e) => {
+        e.preventDefault();
+        executeSearch();
+      }}
+      className="relative w-full"
+    >
+      {/* ======================================================
+          SEARCH INPUT
+          ====================================================== */}
+
       <div
-        className={"w-full flex items-center gap-2 h-10 rounded-lg border px-3 transition-all duration-150 " +
-          (isFocused
-            ? "border-cyan-500/70 bg-slate-900 shadow-[0_0_0_3px_rgba(6,182,212,.12)]"
-            : "border-slate-700/70 bg-slate-900/70 hover:border-slate-600")}
+        className={[
+          "relative flex items-center",
+          "w-full",
+          "rounded-xl",
+          "border",
+          "transition-all",
+          "duration-200",
+          "focus-within:ring-2",
+          "focus-within:ring-cyan-400",
+          "focus-within:ring-offset-2",
+          "focus-within:ring-offset-slate-950",
+
+          isFocused
+            ? "border-cyan-500/60 bg-slate-900 shadow-lg shadow-cyan-500/5"
+            : "border-slate-700 bg-slate-950/80",
+
+          validationErrors.length > 0
+            ? "border-red-500/60 focus-within:ring-red-400"
+            : "",
+        ].join(" ")}
       >
-        {searching || suggestionsLoading ? (
-          <Loader2 size={15} className="text-cyan-400 animate-spin shrink-0" />
-        ) : (
-          <Search size={15} className={isFocused ? "text-cyan-400 shrink-0" : "text-slate-500 shrink-0"} />
-        )}
+        {/* SEARCH ICON */}
+
+        <div className="pl-3.5 pr-2 text-slate-500">
+          {searching ? (
+            <Loader2
+              size={17}
+              className="animate-spin text-cyan-400"
+            />
+          ) : (
+            <Search size={17} />
+          )}
+        </div>
+
+        {/* INPUT */}
 
         <input
           ref={inputRef}
+          type="text"
           value={queryStr}
-          onChange={(e) => updateQuery(e.target.value)}
-          onFocus={() => { setIsFocused(true); setSelectedSuggestion(0); }}
+          onChange={handleInputChange}
           onKeyDown={handleKeyDown}
-          placeholder="Search telemetry — host:MANI severity:critical eventid:4688"
-          className="flex-1 min-w-0 bg-transparent outline-none text-slate-100 placeholder:text-slate-600 text-sm tracking-wide"
+          onFocus={() => {
+            setIsFocused(true);
+            detectActiveField();
+          }}
+          onClick={handleCursorChange}
+          onKeyUp={handleCursorChange}
+          onSelect={handleCursorChange}
+          placeholder="Search events...  e.g. event_id:4624"
+          aria-label="Search security events and logs. Use query syntax like event_id:4624 or host:WORKSTATION01"
+          autoComplete="off"
+          spellCheck="false"
+          className={[
+            "flex-1",
+            "min-w-0",
+            "bg-transparent",
+            "outline-none",
+            "border-none",
+            "text-sm",
+            "text-slate-200",
+            "placeholder:text-slate-600",
+            "py-3",
+            "focus:ring-0", // Prevent double ring, container already has focus styling
+          ].join(" ")}
         />
 
-        {totalResults !== null && (
-          <span className="text-[10px] font-bold text-slate-500 tabular-nums shrink-0">
-            {totalResults.toLocaleString()}
-          </span>
+        {/* ACTIVE FIELD INDICATOR */}
+
+        {activeField && (
+          <div className="hidden sm:flex items-center mr-2">
+            <span className="px-2 py-1 rounded-md bg-cyan-500/10 border border-cyan-500/20 text-[10px] font-semibold uppercase tracking-wider text-cyan-400">
+              {activeField}
+            </span>
+          </div>
         )}
+
+        {/* CLEAR */}
 
         {queryStr && (
           <button
-            onClick={clearSearch}
-            title="Clear search (Esc)"
-            className="text-slate-500 hover:text-white transition shrink-0"
+            type="button"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              clearSearch();
+            }}
+            aria-label="Clear search query"
+            className="p-2 text-slate-500 hover:text-slate-200 transition-colors focus:ring-2 focus:ring-cyan-400 focus:outline-none rounded-lg"
           >
-            <X size={14} />
+            <X size={16} aria-hidden="true" />
           </button>
         )}
 
-        {/* Syntax help button */}
-        <div className="relative" ref={helpRef}>
-          <button
-            onClick={() => setShowHelp(!showHelp)}
-            title="Search syntax help"
-            className="text-slate-600 hover:text-cyan-400 transition shrink-0 p-0.5"
-          >
-            <HelpCircle size={14} />
-          </button>
-          {showHelp && (
-            <div className="absolute right-0 top-8 z-[999] w-72 rounded-lg border border-slate-700/80 bg-slate-900/98 backdrop-blur-2xl shadow-2xl shadow-black/50 overflow-hidden">
-              <div className="px-3 py-2 border-b border-slate-800 bg-slate-900/60">
-                <p className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">Search Syntax</p>
-              </div>
-              <div className="p-3 space-y-1.5">
-                {SYNTAX_EXAMPLES.map((ex) => (
-                  <div key={ex.example} className="flex items-center justify-between gap-3">
-                    <span className="text-[10px] text-slate-500 font-semibold">{ex.label}</span>
-                    <button
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        updateQuery(ex.example);
-                        setShowHelp(false);
-                        inputRef.current?.focus();
-                      }}
-                      className="text-[11px] font-mono text-cyan-400 hover:text-cyan-300 bg-slate-800/60 px-2 py-0.5 rounded border border-slate-700/40 transition"
-                    >
-                      {ex.example}
-                    </button>
-                  </div>
-                ))}
-              </div>
-              <div className="px-3 py-1.5 border-t border-slate-800 bg-slate-900/60 text-[9px] text-slate-600">
-                Supports AND, OR, NOT operators and quoted values
-              </div>
-            </div>
-          )}
-        </div>
+        {/* HELP */}
+
+        <button
+          type="button"
+          onMouseDown={(e) => {
+            e.preventDefault();
+
+            setShowHelp((current) => !current);
+            setIsFocused(true);
+          }}
+          aria-label="Show search syntax help"
+          className={[
+            "p-2 mr-1",
+            "transition-colors",
+            "focus:ring-2 focus:ring-cyan-400 focus:outline-none rounded-lg",
+            showHelp
+              ? "text-cyan-400"
+              : "text-slate-600 hover:text-slate-300",
+          ].join(" ")}
+        >
+          <HelpCircle size={16} aria-hidden="true" />
+        </button>
+
+        {/* SEARCH BUTTON */}
 
         <button
           type="submit"
           disabled={searching}
-          className="flex items-center gap-1.5 px-3 h-7 rounded-md bg-cyan-600 hover:bg-cyan-500 disabled:bg-cyan-600/50 transition-all text-xs font-bold text-white shrink-0"
+          aria-label="Submit search query"
+          className={[
+            "mr-1.5",
+            "px-3",
+            "py-1.5",
+            "rounded-lg",
+            "text-xs",
+            "font-semibold",
+            "transition-all",
+            "focus:ring-2 focus:ring-cyan-400 focus:outline-none",
+            searching
+              ? "bg-slate-800 text-slate-500"
+              : "bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20",
+          ].join(" ")}
         >
-          {searching ? <Loader2 size={12} className="animate-spin" /> : <Search size={12} />}
           Search
         </button>
       </div>
 
-      {/* SUGGESTIONS / HISTORY DROPDOWN */}
-      {showDropdown && (
-        <div className="absolute top-11 left-0 right-0 rounded-lg border border-slate-700/80 bg-slate-900/98 backdrop-blur-2xl shadow-2xl shadow-black/50 overflow-hidden z-[999]">
-          <div className="px-3.5 py-1.5 border-b border-slate-800 text-[9px] uppercase tracking-widest text-slate-500 flex items-center gap-2 bg-slate-900/60">
-            {suggestions.type === "history" ? (
-              <><History size={10} /> Recent Searches</>
-            ) : suggestions.type === "syntax" ? (
-              <><Terminal size={10} /> Query Fields</>
-            ) : suggestions.type === "values" ? (
-              <><Sparkles size={10} /> Suggested Values</>
-            ) : (
-              <><Sparkles size={10} /> Suggestions</>
-            )}
-            {suggestionsLoading && <Loader2 size={9} className="animate-spin text-cyan-400 ml-auto" />}
-          </div>
+      {/* ======================================================
+          VALIDATION
+          ====================================================== */}
 
-          <div className="max-h-64 overflow-y-auto">
-            {suggestions.items.map((item, index) => renderSuggestionItem(item, index))}
-          </div>
+      {validationErrors.length > 0 && (
+        <div className="mt-2 rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2">
+          <div className="flex items-start gap-2">
+            <AlertTriangle
+              size={14}
+              className="mt-0.5 shrink-0 text-red-400"
+            />
 
-          <div className="px-3.5 py-1 border-t border-slate-800 flex items-center justify-between text-[9px] uppercase tracking-wider text-slate-600 bg-slate-900/60">
-            <span>↑↓ Navigate · ↵ Select · Tab Complete</span>
-            <div className="flex items-center gap-3">
-              {suggestions.type === "history" && history.length > 0 && (
-                <button
-                  onClick={async () => {
-                    try {
-                      await api.delete("/search/history");
-                      setServerHistory([]);
-                      setIsFocused(false);
-                    } catch { /* non-critical */ }
-                  }}
-                  className="text-red-400 hover:text-red-300 transition"
-                >
-                  Clear history
-                </button>
-              )}
-              {suggestions.type === "syntax" && (
-                <span>Type field:value syntax or free text</span>
-              )}
-              <span>{suggestions.items.length} results</span>
+            <div className="space-y-1">
+              {validationErrors
+                .slice(0, 3)
+                .map((error, index) => (
+                  <div
+                    key={index}
+                    className="text-xs text-red-300"
+                  >
+                    {typeof error === "string"
+                      ? error
+                      : error?.message ||
+                        "Invalid query"}
+                  </div>
+                ))}
             </div>
           </div>
         </div>
       )}
+
+      {/* ======================================================
+          SUGGESTIONS
+          ====================================================== */}
+
+      {showDropdown && (
+        <div className="absolute z-50 left-0 right-0 mt-2 overflow-hidden rounded-xl border border-slate-700 bg-slate-950 shadow-2xl shadow-black/40">
+          {/* HEADER */}
+
+          <div className="flex items-center justify-between px-3.5 py-2 border-b border-slate-800">
+            <div className="flex items-center gap-2">
+              <Sparkles
+                size={13}
+                className="text-cyan-400"
+              />
+
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                Suggestions
+              </span>
+            </div>
+
+            {suggestionsLoading && (
+              <Loader2
+                size={13}
+                className="animate-spin text-cyan-400"
+              />
+            )}
+          </div>
+
+          {/* ITEMS */}
+
+          <div className="max-h-80 overflow-y-auto py-1">
+            {suggestions.items.map(
+              (item, index) => {
+                const isSelected =
+                  index ===
+                  selectedSuggestion;
+
+                let icon = null;
+
+                let typeLabel = "SUGGEST";
+
+                if (
+                  item._type === "field"
+                ) {
+                  icon = (
+                    <FileJson
+                      size={13}
+                      className="text-cyan-400"
+                    />
+                  );
+
+                  typeLabel = "FIELD";
+                } else if (
+                  item._type === "time"
+                ) {
+                  icon = (
+                    <Clock
+                      size={13}
+                      className="text-amber-400"
+                    />
+                  );
+
+                  typeLabel = "TIME";
+                } else if (
+                  item._type === "history"
+                ) {
+                  icon = (
+                    <History
+                      size={13}
+                      className="text-slate-400"
+                    />
+                  );
+
+                  typeLabel = "HISTORY";
+                } else if (
+                  item._type === "live"
+                ) {
+                  icon = (
+                    <Zap
+                      size={13}
+                      className="text-cyan-400"
+                    />
+                  );
+
+                  typeLabel = "VALUE";
+                }
+
+                return (
+                  <button
+                    key={`${item._type}-${item.value}-${index}`}
+                    type="button"
+                    onMouseDown={(e) => {
+                      /*
+                       * Prevent input blur before selection.
+                       *
+                       * This is important.
+                       */
+                      e.preventDefault();
+
+                      selectSuggestion(item);
+                    }}
+                    aria-label={`Select ${item.label} suggestion${item.description ? ` - ${item.description}` : ''}`}
+                    className={[
+                      "w-full",
+                      "px-3.5",
+                      "py-2",
+                      "text-left",
+                      "text-xs",
+                      "transition-all",
+                      "flex",
+                      "items-center",
+                      "gap-2.5",
+                      "border-l-2",
+                      "focus:ring-2",
+                      "focus:ring-cyan-400",
+                      "focus:outline-none",
+                      isSelected
+                        ? "bg-cyan-600/15 text-cyan-300 border-cyan-500"
+                        : "text-slate-300 hover:bg-slate-800/60 border-transparent",
+                    ].join(" ")}
+                  >
+                    {icon && (
+                      <span className="shrink-0">
+                        {icon}
+                      </span>
+                    )}
+
+                    <span className="flex-1 min-w-0 font-medium truncate">
+                      {item.label}
+                    </span>
+
+                    {item.description && (
+                      <span className="hidden sm:block max-w-[180px] truncate text-[10px] text-slate-600">
+                        {item.description}
+                      </span>
+                    )}
+
+                    <span
+                      className={[
+                        "text-[9px]",
+                        "font-bold",
+                        "uppercase",
+                        "tracking-wider",
+                        "shrink-0",
+
+                        isSelected
+                          ? "text-cyan-500"
+                          : "text-slate-600",
+                      ].join(" ")}
+                    >
+                      {typeLabel}
+                    </span>
+                  </button>
+                );
+              }
+            )}
+          </div>
+
+          {/* KEYBOARD HINT */}
+
+          <div className="flex items-center justify-between border-t border-slate-800 px-3.5 py-2">
+            <div className="flex items-center gap-3 text-[9px] text-slate-600">
+              <span>↑↓ Navigate</span>
+              <span>Enter Select</span>
+              <span>Esc Close</span>
+            </div>
+
+            {activeField && (
+              <span className="text-[9px] text-cyan-500">
+                {activeField}: values
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================
+          HELP PANEL
+          ====================================================== */}
+
+      {showHelp && (
+        <div
+          ref={helpRef}
+          className="absolute z-40 left-0 right-0 mt-2 rounded-xl border border-slate-700 bg-slate-950 shadow-2xl shadow-black/40 overflow-hidden"
+        >
+          <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
+            <div className="flex items-center gap-2">
+              <HelpCircle
+                size={15}
+                className="text-cyan-400"
+              />
+
+              <span className="text-xs font-semibold text-slate-200">
+                SOCRA Search Syntax
+              </span>
+            </div>
+
+            <button
+              type="button"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                setShowHelp(false);
+              }}
+              aria-label="Close search syntax help"
+              className="p-1 text-slate-600 hover:text-slate-300 transition-colors focus:ring-2 focus:ring-cyan-400 focus:outline-none rounded-lg"
+            >
+              <X size={14} aria-hidden="true" />
+            </button>
+          </div>
+
+          <div className="grid gap-2 p-3 sm:grid-cols-2 lg:grid-cols-3">
+            {SYNTAX_EXAMPLES.map(
+              (example) => (
+                <button
+                  key={example.label}
+                  type="button"
+                  aria-label={`Insert ${example.label} example: ${example.example}`}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+
+                    updateQuery(
+                      example.example,
+                      example.example.length
+                    );
+
+                    setShowHelp(false);
+                  }}
+                  className="rounded-lg border border-slate-800 bg-slate-900/50 px-3 py-2 text-left hover:border-cyan-500/30 hover:bg-slate-900 focus:ring-2 focus:ring-cyan-400 focus:outline-none transition-all"
+                >
+                  <div className="text-[10px] font-semibold text-slate-500">
+                    {example.label}
+                  </div>
+
+                  <div className="mt-1 font-mono text-[11px] text-cyan-300">
+                    {example.example}
+                  </div>
+                </button>
+              )
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================
+          SEARCH STATUS
+          ====================================================== */}
+
+      {(totalResults !== null ||
+        previewFilters.length > 0) && (
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            {totalResults !== null && (
+              <span className="text-[10px] text-slate-500">
+                {totalResults.toLocaleString()} results
+              </span>
+            )}
+
+            {queryStr && validationErrors.length === 0 && (
+              <span className="flex items-center gap-1 text-[10px] text-emerald-500">
+                <CheckCircle size={11} />
+                Valid query
+              </span>
+            )}
+          </div>
+
+          {previewFilters.length > 0 && (
+            <button
+              type="button"
+              onClick={() =>
+                setShowPreview(
+                  (current) => !current
+                )
+              }
+              className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-cyan-400"
+            >
+              <ArrowUpRight size={11} />
+
+              Preview
+
+              <ChevronDown
+                size={11}
+                className={
+                  showPreview
+                    ? "rotate-180"
+                    : ""
+                }
+              />
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* ======================================================
+          PREVIEW
+          ====================================================== */}
+
+      {showPreview &&
+        previewFilters.length > 0 && (
+          <div className="mt-2 rounded-lg border border-slate-800 bg-slate-950/70 p-3">
+            <div className="mb-2 flex items-center gap-2">
+              <FileJson
+                size={13}
+                className="text-cyan-400"
+              />
+
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                Parsed Filters
+              </span>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              {previewFilters.map(
+                (filter) => (
+                  <div
+                    key={`${filter.field}-${filter.value}`}
+                    className="rounded-md border border-slate-800 bg-slate-900 px-2 py-1"
+                  >
+                    <span className="text-[10px] font-semibold text-cyan-400">
+                      {filter.field}
+                    </span>
+
+                    <span className="mx-1 text-slate-700">
+                      :
+                    </span>
+
+                    <span className="font-mono text-[10px] text-slate-300">
+                      {filter.value}
+                    </span>
+                  </div>
+                )
+              )}
+            </div>
+          </div>
+        )}
     </form>
   );
 }

@@ -1,119 +1,181 @@
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { Shield, Loader2, ArrowLeft } from "lucide-react";
+import { Shield, Loader2, ArrowLeft, Mail } from "lucide-react";
 import api from "../services/api";
 
 function ForgotPassword() {
   const navigate = useNavigate();
+
   const [email, setEmail] = useState("");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (event) => {
+    event?.preventDefault();
+
     setError("");
     setSuccess("");
 
-    if (!email.trim()) {
+    const normalizedEmail = email.trim().toLowerCase();
+
+    if (!normalizedEmail) {
       setError("Email is required.");
       return;
     }
 
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      setError("Please enter a valid email address.");
+      return;
+    }
+
     setLoading(true);
+
     try {
       const response = await api.post("/forgot-password", {
-        email: email.trim().toLowerCase(),
+        email: normalizedEmail,
       });
 
       if (response.data?.success) {
-        setSuccess(response.data.message);
-        // Navigate to reset password page after a brief delay
+        setSuccess(
+          response.data?.message ||
+            "If the account is eligible, a password reset code will be sent."
+        );
+
         setTimeout(() => {
           navigate("/reset-password", {
-            state: { email: email.trim().toLowerCase() },
+            state: { email: normalizedEmail },
           });
         }, 1500);
       } else {
-        setError(response.data?.error || "Failed to send reset code.");
+        setError(
+          response.data?.error || "Failed to send reset code. Please try again."
+        );
       }
     } catch (err) {
       setError(
-        err.response?.data?.error || "Failed to send reset code. Please try again."
+        err.response?.data?.error ||
+          "Failed to send reset code. Please try again."
       );
     } finally {
       setLoading(false);
     }
   };
 
+  const inputClass =
+    "w-full rounded-xl border border-slate-700/70 bg-slate-950/70 px-4 py-3 text-sm text-slate-200 placeholder:text-slate-600 outline-none transition-colors focus:border-slate-500 focus:ring-1 focus:ring-slate-500/20";
+
   return (
-    <div className="flex items-center justify-center min-h-screen bg-slate-950">
-      <div className="w-full max-w-md px-4">
-        <div className="bg-slate-800/40 border border-slate-700/60 rounded-2xl p-8 shadow-2xl shadow-black/40">
-          <div className="flex flex-col items-center mb-8">
-            <div className="w-14 h-14 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center mb-4">
-              <Shield size={28} className="text-red-400" />
+    <div className="flex min-h-screen items-center justify-center bg-slate-950 px-4 py-10 text-slate-200">
+      <div className="w-full max-w-md">
+        <div className="rounded-2xl border border-slate-800/90 bg-slate-900/70 p-6 shadow-2xl shadow-black/30 sm:p-8">
+          {/* Header */}
+          <div className="mb-8 flex flex-col items-center text-center">
+            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-slate-700/70 bg-slate-800/70">
+              <Shield size={27} className="text-slate-300" />
             </div>
-            <h1 className="text-2xl font-bold text-white tracking-wide">
+
+            <h1 className="text-2xl font-bold tracking-tight text-slate-100">
               Forgot Password
             </h1>
-            <p className="text-xs text-slate-500 mt-1.5 font-medium tracking-wider text-center">
-              Enter your email to receive a reset code
+
+            <p className="mt-2 text-sm leading-relaxed text-slate-400">
+              Enter your registered email address and we’ll help you recover
+              access to your account.
             </p>
           </div>
 
-          <div className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-5">
+            {/* Email */}
             <div>
-              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">
+              <label
+                htmlFor="reset-email"
+                className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-400"
+              >
                 Email Address
               </label>
-              <input
-                type="email"
-                placeholder="Enter your email"
-                className="w-full bg-slate-900/50 border border-slate-800 rounded-lg px-4 py-2.5 text-sm text-slate-200 placeholder:text-slate-600 outline-none focus:border-cyan-500/60 focus:ring-1 focus:ring-cyan-500/30 transition-all"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
-              />
+
+              <div className="relative">
+                <Mail
+                  size={17}
+                  className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500"
+                />
+
+                <input
+                  id="reset-email"
+                  type="email"
+                  name="email"
+                  autoComplete="email"
+                  placeholder="you@example.com"
+                  className={`${inputClass} pl-10`}
+                  value={email}
+                  onChange={(event) => {
+                    setEmail(event.target.value);
+                    setError("");
+                  }}
+                  required
+                  disabled={loading}
+                />
+              </div>
+
+              <p className="mt-2 text-xs leading-relaxed text-slate-500">
+                If your account is eligible, you’ll receive a verification code
+                by email.
+              </p>
             </div>
 
+            {/* Submit */}
             <button
-              onClick={handleSubmit}
+              type="submit"
               disabled={loading}
-              className="w-full bg-cyan-600 hover:bg-cyan-500 disabled:bg-cyan-600/50 text-white text-sm font-bold py-2.5 rounded-lg transition-all duration-150 flex items-center justify-center gap-2 mt-2"
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-600/60 bg-slate-700 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {loading ? (
                 <>
                   <Loader2 size={16} className="animate-spin" />
-                  Sending...
+                  Sending Reset Code...
                 </>
               ) : (
                 "Send Reset Code"
               )}
             </button>
-          </div>
+          </form>
 
+          {/* Error */}
           {error && (
-            <div className="mt-4 rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-2.5 text-xs text-red-300 text-center">
+            <div
+              role="alert"
+              className="mt-5 rounded-xl border border-red-900/60 bg-red-950/30 px-4 py-3 text-sm text-red-300"
+            >
               {error}
             </div>
           )}
 
+          {/* Success */}
           {success && (
-            <div className="mt-4 rounded-lg border border-green-500/20 bg-green-500/10 px-4 py-2.5 text-xs text-green-300 text-center">
+            <div
+              role="status"
+              className="mt-5 rounded-xl border border-emerald-900/60 bg-emerald-950/30 px-4 py-3 text-sm text-emerald-300"
+            >
               {success}
             </div>
           )}
 
-          <div className="mt-6 text-center">
+          {/* Back to Login */}
+          <div className="mt-7 border-t border-slate-800 pt-5 text-center">
             <Link
               to="/login"
-              className="text-slate-500 hover:text-slate-300 text-xs inline-flex items-center gap-1"
+              className="inline-flex items-center gap-2 text-xs font-medium text-slate-500 transition-colors hover:text-slate-300"
             >
-              <ArrowLeft size={12} />
+              <ArrowLeft size={14} />
               Back to Sign In
             </Link>
           </div>
         </div>
+
+        <p className="mt-5 text-center text-xs text-slate-600">
+          SOCRA AI · Secure Account Recovery
+        </p>
       </div>
     </div>
   );

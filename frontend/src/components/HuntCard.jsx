@@ -1,79 +1,40 @@
 function HuntCard({ huntKey, hunt, onRun }) {
-
-    const mitreLabel = typeof hunt.mitre === "object"
-        ? hunt.mitre?.id || hunt.mitre?.technique || "-"
-        : hunt.mitre || "-";
+    const mitreLabel =
+        typeof hunt.mitre === "object"
+            ? hunt.mitre?.id || hunt.mitre?.technique || "-"
+            : hunt.mitre || "-";
 
     return (
-
-        <div className="bg-slate-800/40 border border-slate-700/60 rounded-xl p-6 hover:border-cyan-500/40 transition-all duration-200">
-
-            <h2 className="text-xl font-semibold text-white">
-
+        <div className="rounded-xl border border-slate-800/80 bg-slate-950/60 p-6 transition-all duration-200 hover:border-slate-700 hover:bg-slate-900/80">
+            <h2 className="text-xl font-semibold text-slate-100">
                 {hunt.name}
-
             </h2>
 
-            <div className="mt-4 space-y-2">
-
-                <p className="text-slate-400">
-
-                    <span className="font-semibold text-cyan-400">
-
+            <div className="mt-4 space-y-3">
+                <p className="text-sm text-slate-400">
+                    <span className="font-semibold text-slate-300">
                         MITRE:
-
-                    </span>
-
-                    {" "}
-
+                    </span>{" "}
                     {mitreLabel}
-
                 </p>
 
-                <p className="text-slate-400">
-
+                <p className="text-sm text-slate-400">
                     <span className="font-semibold text-orange-400">
-
                         Severity:
-
-                    </span>
-
-                    {" "}
-
+                    </span>{" "}
                     {hunt.severity}
-
                 </p>
-
             </div>
 
             <button
-
+                type="button"
                 onClick={() => onRun(huntKey)}
-
-                className="
-                    mt-6
-                    w-full
-                    bg-cyan-600
-                    hover:bg-cyan-500
-                    text-white
-                    text-xs
-                    font-bold
-                    rounded-lg
-                    py-3
-                    transition-all
-                    duration-150
-                "
-
+                className="mt-6 w-full rounded-lg border border-slate-700/80 bg-slate-800/80 py-3 text-xs font-bold text-slate-100 transition-all duration-200 hover:border-slate-600 hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-500/40"
             >
-
                 Run Hunt
-
             </button>
-
         </div>
-
     );
-
 }
 
 export default HuntCard;

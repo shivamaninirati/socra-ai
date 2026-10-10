@@ -1,64 +1,25 @@
-import { ShieldAlert } from "lucide-react";
+import { ShieldAlert, Inbox } from "lucide-react";
 
 function EmptyState({
-
-    title,
-
-    description
-
+  title = "No data",
+  description = "Nothing to display yet.",
+  icon = Inbox,
+  action = null,
 }) {
-
-    return (
-
-        <div
-            className="
-                bg-slate-800
-                border
-                border-dashed
-                border-slate-600
-                rounded-2xl
-                p-14
-                text-center
-            "
-        >
-
-            <div
-                className="
-                    w-20
-                    h-20
-                    mx-auto
-                    rounded-full
-                    bg-slate-700
-                    flex
-                    items-center
-                    justify-center
-                    mb-6
-                "
-            >
-
-                <ShieldAlert
-                    size={36}
-                    className="text-cyan-400"
-                />
-
-            </div>
-
-            <h2 className="text-2xl font-bold text-white">
-
-                {title}
-
-            </h2>
-
-            <p className="text-slate-400 mt-3 max-w-md mx-auto leading-7">
-
-                {description}
-
-            </p>
-
+  return (
+    <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
+      <div className="w-16 h-16 rounded-full bg-slate-800/50 border border-slate-700/50 flex items-center justify-center mb-4">
+        <icon size={28} className="text-slate-500" />
+      </div>
+      <h3 className="text-sm font-semibold text-slate-300 mb-1">{title}</h3>
+      <p className="text-xs text-slate-500 max-w-xs leading-relaxed">{description}</p>
+      {action && (
+        <div className="mt-4">
+          {action}
         </div>
-
-    );
-
+      )}
+    </div>
+  );
 }
 
 export default EmptyState;

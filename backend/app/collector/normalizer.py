@@ -68,9 +68,9 @@ class EventNormalizer:
 
                 "source": "Sysmon",
 
-                "host": event.get("computer", ""),
+                "host": event.get("host") or event.get("computer", ""),
 
-                "channel": "Sysmon",
+                "channel": event.get("channel") or "Sysmon",
 
                 "event_id": event.get("event_id", ""),
 

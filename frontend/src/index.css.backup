@@ -1,0 +1,284 @@
+@import "tailwindcss";
+
+* {
+    box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #0f172a;
+    font-family: Arial, Helvetica, sans-serif;
+}
+
+/* ==========================================================================
+   LIGHT THEME (Settings → Dark UI Theme Canvas OFF)
+   --------------------------------------------------------------------------
+   Tailwind v4 emits every color as a CSS custom property (--color-*) and
+   resolves opacity modifiers through color-mix at use time, so remapping the
+   tokens under html.light flips the ENTIRE interface — sidebar, header,
+   cards, tables, dropdowns, inputs, buttons, modals — including all
+   /NN opacity variants, without touching a single component. These rules are
+   un-layered author CSS, so they override the layered @theme defaults.
+
+   Palette: the dark slate surfaces become a cool slate scale (canvas
+   #f1f5f9 → cards #ffffff), light text becomes dark ink (#0f172a →
+   #475569), muted/placeholder text lands on #64748b, and borders read at
+   #cbd5e1/#e2e8f0 so cards, inputs and dropdowns stay visibly separated.
+   Accent text bumps to darker 500/600 shades for contrast on white. Solid
+   accent buttons (bg-cyan-600 etc.) keep WHITE text via the exemption block
+   below — white ink on a colored button stays readable in both themes.
+   ========================================================================== */
+
+html.light {
+    /* Surfaces: exactly matching the requested cool-slate palette */
+    --color-slate-950: #F1F5F9;   /* Application background (main page canvas) */
+    --color-slate-900: #F8FAFC;   /* Main content background */
+    --color-slate-800: #EEF2F7;   /* Secondary surfaces / raised elements */
+    --color-slate-700: #FFFFFF;   /* Cards, panels, dropdown backgrounds */
+    --color-slate-600: #CBD5E1;   /* Borders (inputs, dropdowns, separators) */
+    --color-slate-500: #64748B;   /* Muted text / placeholders */
+    /* Text colors: exactly matching the requested palette */
+    --color-slate-400: #475569;   /* Secondary text */
+    --color-slate-300: #0F172A;   /* Primary text (darkest ink) */
+    --color-slate-200: #0F172A;
+    --color-slate-100: #0F172A;
+    --color-slate-50: #0F172A;
+    --color-white: #0F172A;       /* Default text color */
+    /* Accent colors: SOCRA cyan + status colors as requested */
+    --color-cyan-300: #06B6D4;    /* Primary SOCRA accent */
+    --color-cyan-400: #0891B2;    /* Primary accent hover */
+    --color-red-300: #DC2626;     /* Critical/error */
+    --color-red-400: #DC2626;
+    --color-green-300: #16A34A;   /* Success/operational */
+    --color-green-400: #16A34A;
+    --color-amber-300: #D97706;   /* Warning */
+    --color-amber-400: #D97706;
+    --color-blue-400: #2563EB;    /* Info */
+    --color-blue-500: #2563EB;
+    /* Keep all other accent colors properly mapped */
+    --color-purple-300: #9333ea;
+    --color-purple-400: #9333ea;
+    --color-yellow-400: #ca8a04;
+    --color-orange-400: #ea580c;
+    --color-emerald-400: #059669;
+    --color-violet-400: #7c3aed;
+    --color-rose-400: #e11d48;
+}
+
+/* Sidebar: slightly darker cool-slate surface than the main content so the
+   navigation rail reads as a distinct surface instead of blending into the
+   near-white canvas (bg-slate-900/40 would otherwise render as white-on-white). */
+html.light aside {
+    background-color: #EEF2F7; /* Secondary surface from the palette */
+}
+
+/* White ink stays white on solid accent buttons (bg-cyan-600, bg-red-600, …),
+   including hover/disabled variants — the class-attribute match also covers
+   `hover:bg-cyan-500` and `disabled:bg-cyan-600/50`. */
+html.light [class*="bg-cyan-500"],
+html.light [class*="bg-cyan-600"],
+html.light [class*="bg-red-500"],
+html.light [class*="bg-red-600"],
+html.light [class*="bg-emerald-500"],
+html.light [class*="bg-emerald-600"],
+html.light [class*="bg-violet-500"],
+html.light [class*="bg-violet-600"],
+html.light [class*="bg-blue-500"],
+html.light [class*="bg-blue-600"],
+html.light [class*="bg-amber-500"],
+html.light [class*="bg-amber-600"],
+html.light [class*="bg-yellow-500"],
+html.light [class*="bg-yellow-600"],
+html.light [class*="bg-green-500"],
+html.light [class*="bg-green-600"],
+html.light [class*="bg-orange-500"],
+html.light [class*="bg-orange-600"],
+html.light [class*="bg-purple-500"],
+html.light [class*="bg-purple-600"],
+html.light [class*="bg-rose-500"],
+html.light [class*="bg-rose-600"],
+html.light [class*="bg-teal-500"],
+html.light [class*="bg-teal-600"],
+html.light [class*="bg-indigo-500"],
+html.light [class*="bg-indigo-600"],
+html.light [class*="bg-sky-500"],
+html.light [class*="bg-sky-600"] {
+    --color-white: #ffffff;
+}
+
+/* Base page background + scrollbars follow the theme */
+html.light body,
+html.light #root {
+    background: #F1F5F9; /* Application background from the palette */
+}
+
+html.light ::-webkit-scrollbar-track {
+    background: #F1F5F9;
+}
+
+html.light ::-webkit-scrollbar-thumb {
+    background: rgba(100, 116, 139, 0.45);
+    border: 2px solid #F1F5F9;
+}
+
+html.light ::-webkit-scrollbar-thumb:hover {
+    background: rgba(6, 182, 212, 0.55); /* SOCRA cyan for hover */
+    border: 1px solid rgba(6, 182, 212, 0.3);
+}
+
+html.light,
+html.light body,
+html.light .custom-scrollbar {
+    scrollbar-color: rgba(100, 116, 139, 0.45) #F1F5F9;
+}
+
+/* ==========================================================================
+   GLOBAL DARK GLASS SCROLLBAR CONFIGURATION MATRIX
+   ========================================================================== */
+
+/* 1. Chromium Browsers Overrides (Chrome, Safari, Edge) */
+::-webkit-scrollbar {
+  width: 10px;               /* Vertical line width footprint */
+  height: 10px;              /* Horizontal bar height footprint */
+}
+
+/* Background track running behind the sliding handle */
+::-webkit-scrollbar-track {
+  background: #0f172a;       /* Direct hex match to your main layout background */
+}
+
+/* Core interactive dragging handle */
+::-webkit-scrollbar-thumb {
+  background: rgba(51, 65, 85, 0.5); /* Translucent slate-700 pill */
+  border-radius: 9999px;             /* Fully rounded geometry */
+  border: 2px solid #0f172a;         /* Creates a padding gap around the handle */
+}
+
+/* Hover interaction state color lift */
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(34, 211, 238, 0.4);        /* Shifts to a soft translucent cyan glow */
+  border: 1px solid rgba(34, 211, 238, 0.2);  /* Subtle neon edge border masking */
+}
+
+/* 2. Standard Cross-Browser Native Overrides (Firefox Fallback) */
+html,
+body,
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(51, 65, 85, 0.5) #0f172a; /* [Thumb Color] [Track Color] */
+}
+
+/* ==========================================================================
+   DROPDOWN SCROLLBAR — hidden but functional
+   The dropdown menu scrolls via wheel/trackpad/keyboard but shows no
+   visible scrollbar track or thumb, keeping the dark panel clean.
+   ========================================================================== */
+.dropdown-scrollbar::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+.dropdown-scrollbar {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge */
+}
+
+/* ==========================================================================
+   SOCRA AI PREMIUM LOADING SCREEN ANIMATIONS
+   Enterprise cybersecurity startup screen — GPU-friendly, lightweight.
+   ========================================================================== */
+
+@keyframes socra-pulse-glow {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.05); }
+}
+
+@keyframes socra-ring-rotate {
+  from { transform: translate(-50%, -50%) rotate(0deg); }
+  to { transform: translate(-50%, -50%) rotate(360deg); }
+}
+
+@keyframes socra-radar-sweep {
+  from { transform: translate(-50%, -50%) rotate(0deg); }
+  to { transform: translate(-50%, -50%) rotate(360deg); }
+}
+
+@keyframes socra-dash-spin {
+  from { stroke-dashoffset: 0; }
+  to { stroke-dashoffset: -50; }
+}
+
+@keyframes socra-scan-line {
+  0% { opacity: 0; transform: translateY(-80px); }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(80px); }
+}
+
+@keyframes socra-fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes socra-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; pointer-events: none; }
+}
+
+@keyframes socra-logo-enter {
+  from { opacity: 0; transform: scale(0.85); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes socra-text-enter {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes socra-progress-fill {
+  from { width: 0%; }
+  to { width: 100%; }
+}
+
+@keyframes socra-dot-blink {
+  0%, 20% { opacity: 0; }
+  50% { opacity: 1; }
+  80%, 100% { opacity: 0; }
+}
+
+.socra-loading-overlay {
+  animation: socra-fade-out 0.6s ease-out forwards;
+  animation-delay: 0.2s;
+}
+
+.socra-logo-enter {
+  animation: socra-logo-enter 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.socra-text-enter {
+  animation: socra-text-enter 0.7s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation-delay: 0.3s;
+  opacity: 0;
+}
+
+.socra-subtext-enter {
+  animation: socra-text-enter 0.7s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation-delay: 0.5s;
+  opacity: 0;
+}
+
+.socra-status-enter {
+  animation: socra-fade-in 0.5s ease-out forwards;
+  opacity: 0;
+}
+
+.socra-progress-bar {
+  animation: socra-progress-fill 4s ease-in-out forwards;
+}

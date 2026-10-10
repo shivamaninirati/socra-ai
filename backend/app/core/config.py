@@ -5,22 +5,22 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
 
     # =========================
-    # Splunk
+    # Splunk (optional integration)
     # =========================
 
-    SPLUNK_HOST: str
+    SPLUNK_HOST: str = ""
 
     SPLUNK_PORT: int = 8089
 
-    SPLUNK_USERNAME: str
+    SPLUNK_USERNAME: str = ""
 
-    SPLUNK_PASSWORD: str
+    SPLUNK_PASSWORD: str = ""
 
     # =========================
-    # Gemini AI
+    # Gemini AI (optional integration)
     # =========================
 
-    GEMINI_API_KEY: str
+    GEMINI_API_KEY: str = ""
 
     # =========================
     # JWT

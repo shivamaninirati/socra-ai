@@ -907,7 +907,12 @@ class SQLiteStorage:
                     status TEXT DEFAULT 'pending_verification',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
-                    last_login TEXT
+                    last_login TEXT,
+                    phone TEXT,
+                    job_title TEXT,
+                    soc_role TEXT,
+                    department TEXT,
+                    organization TEXT
                 )
             """)
             cursor.execute(
@@ -2777,7 +2782,7 @@ class SQLiteStorage:
             _sqlite_bind_safe(mitre_val),
             _sqlite_bind_safe(data.get("event_time")),
             _sqlite_bind_safe(data.get("created_at")),
-            _sqlite_bind_safe(data.get("alert_id")),
+            _sqlite_bind_safe(data.get("alert_id") or data.get("id", "")),
         ))
 
     def get_today_notifications(self, user_id):
@@ -3017,25 +3022,17 @@ class SQLiteStorage:
         """Get the count of unread notifications for today (derived).
 
         Only counts Critical/High severity events — normal telemetry is excluded.
+        Uses the same notifications table as get_notification_summary for consistency.
+        Normalizes severity casing to handle any case variants.
         """
-        from datetime import datetime, timezone
-        today_start = datetime.now(timezone.utc).replace(
-            hour=0, minute=0, second=0, microsecond=0
-        ).isoformat().replace("+00:00", "Z")
-
-        NOTIFICATION_SEVERITIES = ("Critical", "High")
-        placeholders = ",".join("?" for _ in NOTIFICATION_SEVERITIES)
         with sqlite3.connect(self.db_path, timeout=self.sqlite_timeout) as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                f"SELECT COUNT(*) FROM events e "
-                f"LEFT JOIN notification_read_state nrs "
-                f"  ON nrs.alert_id = e.id AND nrs.user_id = ? "
-                f"WHERE e.event_time >= ? AND nrs.alert_id IS NULL "
-                f"AND e.severity IN ({placeholders})",
-                [user_id, today_start] + list(NOTIFICATION_SEVERITIES),
-            )
-            return cursor.fetchone()[0]
+            cursor.execute("""
+                SELECT COUNT(*) FROM notifications 
+                WHERE user_id = ? AND read = 0 AND status != 'resolved'
+                AND LOWER(severity) IN ('critical', 'high')
+            """, (user_id,))
+            return cursor.fetchone()[0] or 0
 
     def get_derived_total_today(self):
         """Get total number of today's HIGH/CRITICAL events.
@@ -3095,7 +3092,8 @@ class SQLiteStorage:
         """Mark all of today's notifications as read for a user.
 
         Updates the notifications table directly — the source of truth
-        for notification read state.
+        for notification read state. Blocks until the write is processed
+        to ensure the database is updated before returning to the API.
         """
         from datetime import datetime, timezone
         now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -3103,13 +3101,21 @@ class SQLiteStorage:
             hour=0, minute=0, second=0, microsecond=0
         ).isoformat().replace("+00:00", "Z")
         try:
+            # Wait for the write to be queued (blocking with timeout)
             self.write_queue.put(("mark_all_derived_read", {
                 "user_id": user_id,
                 "read_at": now,
                 "today_start": today_start,
-            }), block=False)
+            }), block=True, timeout=5.0)
+            # Wait for the queue to process this item by joining
+            # This ensures the write is committed before returning
+            self.write_queue.join()
             return True
         except queue.Full:
+            logger.error("[SQLiteStorage] Write queue full when marking all as read")
+            return False
+        except Exception as e:
+            logger.error(f"[SQLiteStorage] Failed to mark all as read: {e}", exc_info=True)
             return False
 
     def _process_mark_all_derived_read(self, conn, data):
@@ -3117,20 +3123,22 @@ class SQLiteStorage:
 
         Updates the notifications table directly — the source of truth
         for notification read state.  Only marks Critical and High severity
-        notifications.  Normal telemetry is excluded.
+        notifications (normalizes casing to handle any case variants).
+        Normal telemetry is excluded.
         """
         cursor = conn.cursor()
+        # Normalize severity matching - handle any casing (Critical, critical, HIGH, high, etc.)
         cursor.execute(
             "UPDATE notifications SET read = 1 "
             "WHERE user_id = ? AND read = 0 "
-            "AND severity IN ('Critical', 'High')",
+            "AND LOWER(severity) IN ('critical', 'high')",
             (data["user_id"],),
         )
         # Also bulk-update notification_read_state for backward compatibility
         cursor.execute(
             "INSERT OR IGNORE INTO notification_read_state (user_id, alert_id, read_at) "
             "SELECT ?, id, ? FROM events WHERE event_time >= ? "
-            "AND severity IN ('Critical', 'High')",
+            "AND LOWER(severity) IN ('critical', 'high')",
             (data["user_id"], data["read_at"], data["today_start"]),
         )
         conn.commit()
@@ -3148,14 +3156,14 @@ class SQLiteStorage:
         with sqlite3.connect(self.db_path, timeout=self.sqlite_timeout) as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT
-                    SUM(CASE WHEN severity = 'Critical' THEN 1 ELSE 0 END) AS critical,
-                    SUM(CASE WHEN severity = 'High' THEN 1 ELSE 0 END) AS high,
-                    SUM(CASE WHEN notification_type = 'system' THEN 1 ELSE 0 END) AS system_count,
-                    COUNT(*) AS total
-                FROM notifications
-                WHERE user_id = ? AND read = 0 AND status != 'resolved'
-            """, (user_id,))
+            SELECT
+                SUM(CASE WHEN LOWER(severity) = 'critical' THEN 1 ELSE 0 END) AS critical,
+                SUM(CASE WHEN LOWER(severity) = 'high' THEN 1 ELSE 0 END) AS high,
+                SUM(CASE WHEN notification_type = 'system' THEN 1 ELSE 0 END) AS system_count,
+                COUNT(*) AS total
+            FROM notifications
+            WHERE user_id = ? AND read = 0 AND status != 'resolved'
+        """, (user_id,))
             row = cursor.fetchone()
             if not row:
                 return {"critical": 0, "high": 0, "system": 0, "total_attention": 0}
@@ -3335,6 +3343,8 @@ class SQLiteStorage:
                 (now, user_id)
             )
             conn.commit()
+
+
 
     # ------------------------------------------------------------------
     # Search history (user-isolated)

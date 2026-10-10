@@ -12,6 +12,7 @@ function ResetPassword() {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [loading, setLoading] = useState(false);
@@ -23,83 +24,112 @@ function ResetPassword() {
 
   useEffect(() => {
     if (!email) {
-      navigate("/forgot-password");
+      navigate("/forgot-password", { replace: true });
       return;
     }
+
     inputRefs.current[0]?.focus();
   }, [email, navigate]);
 
   useEffect(() => {
-    if (countdown > 0) {
-      const timer = setTimeout(() => setCountdown(countdown - 1), 1000);
-      return () => clearTimeout(timer);
-    } else {
+    if (countdown <= 0) {
       setCanResend(true);
+      return;
     }
+
+    const timer = setTimeout(() => {
+      setCountdown((previous) => previous - 1);
+    }, 1000);
+
+    return () => clearTimeout(timer);
   }, [countdown]);
 
   const handleOtpChange = (index, value) => {
     if (!/^\d*$/.test(value)) return;
 
-    const newOtp = [...otp];
-    newOtp[index] = value.slice(-1);
-    setOtp(newOtp);
-    setError("");
+    const digit = value.slice(-1);
+    const nextOtp = [...otp];
+    nextOtp[index] = digit;
 
-    if (value && index < 5) {
+    setOtp(nextOtp);
+    setOtpVerified(false);
+    setError("");
+    setSuccess("");
+
+    if (digit && index < 5) {
       inputRefs.current[index + 1]?.focus();
     }
   };
 
-  const handleKeyDown = (index, e) => {
-    if (e.key === "Backspace" && !otp[index] && index > 0) {
+  const handleKeyDown = (index, event) => {
+    if (
+      event.key === "Backspace" &&
+      !otp[index] &&
+      index > 0
+    ) {
       inputRefs.current[index - 1]?.focus();
     }
-  };
 
-  const handlePaste = (e) => {
-    e.preventDefault();
-    const pasted = e.clipboardData.getData("text").replace(/\D/g, "").slice(0, 6);
-    if (pasted) {
-      const newOtp = pasted.split("").concat(Array(6).fill("")).slice(0, 6);
-      setOtp(newOtp);
-      if (pasted.length === 6) {
-        inputRefs.current[5]?.focus();
-      } else {
-        inputRefs.current[Math.min(pasted.length, 5)]?.focus();
-      }
+    if (event.key === "ArrowLeft" && index > 0) {
+      inputRefs.current[index - 1]?.focus();
+    }
+
+    if (event.key === "ArrowRight" && index < 5) {
+      inputRefs.current[index + 1]?.focus();
     }
   };
 
-  const verifyOtp = async () => {
+  const handlePaste = (event) => {
+    event.preventDefault();
+
+    const pasted = event.clipboardData
+      .getData("text")
+      .replace(/\D/g, "")
+      .slice(0, 6);
+
+    if (!pasted) return;
+
+    const nextOtp = Array(6).fill("");
+
+    pasted.split("").forEach((digit, index) => {
+      nextOtp[index] = digit;
+    });
+
+    setOtp(nextOtp);
+    setOtpVerified(false);
+    setError("");
+    setSuccess("");
+
+    inputRefs.current[Math.min(pasted.length, 5)]?.focus();
+  };
+
+  const verifyOtp = () => {
     const otpCode = otp.join("");
+
     if (otpCode.length !== 6) {
       setError("Please enter the complete 6-digit code.");
-      return;
+      return false;
     }
 
-    setLoading(true);
+    /*
+     * This only checks that six digits have been entered.
+     * Actual OTP verification must happen on the backend
+     * when /reset-password is called.
+     */
+    setOtpVerified(true);
     setError("");
-    try {
-      // We verify the OTP as part of the reset process
-      // For now, mark as verified - actual verification happens with password
-      setOtpVerified(true);
-    } catch (err) {
-      setError("Invalid verification code.");
-    } finally {
-      setLoading(false);
-    }
+
+    return true;
   };
 
-  const handleResetPassword = async () => {
-    setError("");
+  const handleResetPassword = async (event) => {
+    event?.preventDefault();
 
-    if (!otpVerified) {
-      setError("Please verify the OTP code first.");
-      return;
-    }
+    setError("");
+    setSuccess("");
 
     const otpCode = otp.join("");
+
     if (otpCode.length !== 6) {
       setError("Please enter the complete 6-digit code.");
       return;
@@ -110,17 +140,18 @@ function ResetPassword() {
       return;
     }
 
-    if (newPassword !== confirmPassword) {
-      setError("Passwords do not match.");
-      return;
-    }
-
     if (newPassword.length < 8) {
       setError("Password must be at least 8 characters.");
       return;
     }
 
+    if (newPassword !== confirmPassword) {
+      setError("Passwords do not match.");
+      return;
+    }
+
     setLoading(true);
+
     try {
       const response = await api.post("/reset-password", {
         email,
@@ -131,13 +162,14 @@ function ResetPassword() {
 
       if (response.data?.success) {
         setSuccess("Password reset successful! Redirecting to login...");
-        setTimeout(() => navigate("/login"), 2000);
+        setTimeout(() => navigate("/login", { replace: true }), 2000);
       } else {
         setError(response.data?.error || "Password reset failed.");
       }
     } catch (err) {
       setError(
-        err.response?.data?.error || "Password reset failed. Please try again."
+        err.response?.data?.error ||
+          "Password reset failed. Please try again."
       );
     } finally {
       setLoading(false);
@@ -148,157 +180,266 @@ function ResetPassword() {
     setResendLoading(true);
     setError("");
     setSuccess("");
+
     try {
       const response = await api.post("/forgot-password", { email });
+
       if (response.data?.success) {
         setSuccess("A new reset code has been sent.");
+        setOtp(["", "", "", "", "", ""]);
+        setOtpVerified(false);
         setCountdown(60);
         setCanResend(false);
-        setOtpVerified(false);
+        setNewPassword("");
+        setConfirmPassword("");
+        inputRefs.current[0]?.focus();
       } else {
         setError(response.data?.error || "Failed to resend code.");
       }
     } catch (err) {
-      setError(err.response?.data?.error || "Failed to resend code.");
+      setError(
+        err.response?.data?.error || "Failed to resend code."
+      );
     } finally {
       setResendLoading(false);
     }
   };
 
+  const inputClass =
+    "w-full rounded-xl border border-slate-700/70 bg-slate-950/70 px-4 py-3 text-sm text-slate-200 placeholder:text-slate-600 outline-none transition-colors focus:border-slate-500 focus:ring-1 focus:ring-slate-500/20";
+
   return (
-    <div className="flex items-center justify-center min-h-screen bg-slate-950">
-      <div className="w-full max-w-md px-4">
-        <div className="bg-slate-800/40 border border-slate-700/60 rounded-2xl p-8 shadow-2xl shadow-black/40">
-          <div className="flex flex-col items-center mb-8">
-            <div className="w-14 h-14 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center mb-4">
-              <Shield size={28} className="text-red-400" />
+    <div className="flex min-h-screen items-center justify-center bg-slate-950 px-4 py-10 text-slate-200">
+      <div className="w-full max-w-md">
+        <div className="rounded-2xl border border-slate-800/90 bg-slate-900/70 p-6 shadow-2xl shadow-black/30 sm:p-8">
+          {/* Header */}
+          <div className="mb-8 flex flex-col items-center text-center">
+            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-slate-700/70 bg-slate-800/70">
+              <Shield size={27} className="text-slate-300" />
             </div>
-            <h1 className="text-2xl font-bold text-white tracking-wide">
+
+            <h1 className="text-2xl font-bold tracking-tight text-slate-100">
               Reset Password
             </h1>
-            <p className="text-xs text-slate-500 mt-1.5 font-medium tracking-wider text-center">
-              Enter the code and create a new password
+
+            <p className="mt-2 text-sm text-slate-400">
+              Enter your reset code and choose a new password.
             </p>
-            <p className="text-sm text-cyan-400 font-semibold mt-1">{email}</p>
+
+            <p className="mt-3 max-w-full break-all text-sm font-medium text-slate-300">
+              {email}
+            </p>
           </div>
 
-          <div className="space-y-5">
+          <form onSubmit={handleResetPassword} className="space-y-5">
             {/* OTP Input */}
             <div>
-              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2 block">
+              <label
+                htmlFor="otp-0"
+                className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-400"
+              >
                 Verification Code
               </label>
+
               <div className="flex justify-center gap-2">
                 {otp.map((digit, index) => (
                   <input
                     key={index}
-                    ref={(el) => (inputRefs.current[index] = el)}
+                    id={`otp-${index}`}
+                    ref={(element) => {
+                      inputRefs.current[index] = element;
+                    }}
                     type="text"
                     inputMode="numeric"
+                    autoComplete={index === 0 ? "one-time-code" : "off"}
+                    pattern="[0-9]*"
                     maxLength={1}
+                    aria-label={`Verification code digit ${index + 1}`}
                     value={digit}
-                    onChange={(e) => handleOtpChange(index, e.target.value)}
-                    onKeyDown={(e) => handleKeyDown(index, e)}
+                    onChange={(event) =>
+                      handleOtpChange(index, event.target.value)
+                    }
+                    onKeyDown={(event) => handleKeyDown(index, event)}
                     onPaste={handlePaste}
-                    className="w-10 h-12 text-center text-lg font-bold bg-slate-900/50 border border-slate-800 rounded-lg text-slate-200 outline-none focus:border-cyan-500/60 focus:ring-1 focus:ring-cyan-500/30 transition-all"
+                    className="h-12 w-10 rounded-xl border border-slate-700/80 bg-slate-950/70 text-center text-lg font-semibold text-slate-100 outline-none transition-colors focus:border-slate-500 focus:ring-1 focus:ring-slate-500/20 sm:w-11"
                   />
                 ))}
               </div>
+
+              <button
+                type="button"
+                onClick={verifyOtp}
+                disabled={loading || otp.join("").length !== 6}
+                className="mt-3 w-full rounded-lg border border-slate-700/70 bg-slate-800/50 px-3 py-2 text-xs font-semibold text-slate-300 transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {otpVerified ? "Code entered" : "Check Code"}
+              </button>
+
+              <p className="mt-2 text-xs leading-relaxed text-slate-500">
+                The code will be validated by the server when you reset your
+                password.
+              </p>
             </div>
 
             {/* New Password */}
             <div>
-              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">
+              <label
+                htmlFor="new-password"
+                className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-400"
+              >
                 New Password
               </label>
+
               <div className="relative">
                 <input
+                  id="new-password"
                   type={showPassword ? "text" : "password"}
-                  placeholder="Create a strong password"
-                  className="w-full bg-slate-900/50 border border-slate-800 rounded-lg px-4 py-2.5 pr-10 text-sm text-slate-200 placeholder:text-slate-600 outline-none focus:border-cyan-500/60 focus:ring-1 focus:ring-cyan-500/30 transition-all"
+                  autoComplete="new-password"
+                  placeholder="Create a new password"
+                  className={`${inputClass} pr-12`}
                   value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
+                  onChange={(event) => setNewPassword(event.target.value)}
+                  required
+                  minLength={8}
                 />
+
                 <button
                   type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+                  onClick={() => setShowPassword((visible) => !visible)}
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-500 transition-colors hover:text-slate-300"
                 >
-                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
                 </button>
               </div>
+
+              <p className="mt-2 text-xs text-slate-500">
+                Use at least 8 characters.
+              </p>
             </div>
 
             {/* Confirm Password */}
             <div>
-              <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">
+              <label
+                htmlFor="confirm-password"
+                className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-400"
+              >
                 Confirm New Password
               </label>
-              <input
-                type="password"
-                placeholder="Confirm your new password"
-                className="w-full bg-slate-900/50 border border-slate-800 rounded-lg px-4 py-2.5 text-sm text-slate-200 placeholder:text-slate-600 outline-none focus:border-cyan-500/60 focus:ring-1 focus:ring-cyan-500/30 transition-all"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleResetPassword()}
-              />
+
+              <div className="relative">
+                <input
+                  id="confirm-password"
+                  type={showConfirmPassword ? "text" : "password"}
+                  autoComplete="new-password"
+                  placeholder="Re-enter your new password"
+                  className={`${inputClass} pr-12`}
+                  value={confirmPassword}
+                  onChange={(event) => setConfirmPassword(event.target.value)}
+                  required
+                  minLength={8}
+                />
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    setShowConfirmPassword((visible) => !visible)
+                  }
+                  aria-label={
+                    showConfirmPassword
+                      ? "Hide confirmation password"
+                      : "Show confirmation password"
+                  }
+                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-500 transition-colors hover:text-slate-300"
+                >
+                  {showConfirmPassword ? (
+                    <EyeOff size={17} />
+                  ) : (
+                    <Eye size={17} />
+                  )}
+                </button>
+              </div>
             </div>
 
+            {/* Submit */}
             <button
-              onClick={handleResetPassword}
-              disabled={loading}
-              className="w-full bg-cyan-600 hover:bg-cyan-500 disabled:bg-cyan-600/50 text-white text-sm font-bold py-2.5 rounded-lg transition-all duration-150 flex items-center justify-center gap-2"
+              type="submit"
+              disabled={loading || resendLoading}
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-600/60 bg-slate-700 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {loading ? (
                 <>
                   <Loader2 size={16} className="animate-spin" />
-                  Resetting...
+                  Resetting Password...
                 </>
               ) : (
                 "Reset Password"
               )}
             </button>
 
-            {/* Resend */}
+            {/* Resend Code */}
             <div className="text-center">
               {canResend ? (
                 <button
+                  type="button"
                   onClick={handleResend}
-                  disabled={resendLoading}
-                  className="text-cyan-400 hover:text-cyan-300 text-sm font-semibold disabled:opacity-50"
+                  disabled={resendLoading || loading}
+                  className="text-sm font-medium text-slate-300 transition-colors hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {resendLoading ? "Sending..." : "Resend Code"}
+                  {resendLoading ? (
+                    <span className="inline-flex items-center gap-2">
+                      <Loader2 size={14} className="animate-spin" />
+                      Sending Code...
+                    </span>
+                  ) : (
+                    "Resend Code"
+                  )}
                 </button>
               ) : (
-                <p className="text-slate-500 text-sm">
-                  Resend code in {countdown}s
+                <p className="text-sm text-slate-500">
+                  Resend code in{" "}
+                  <span className="font-medium tabular-nums text-slate-400">
+                    {countdown}s
+                  </span>
                 </p>
               )}
             </div>
-          </div>
+          </form>
 
+          {/* Feedback */}
           {error && (
-            <div className="mt-4 rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-2.5 text-xs text-red-300 text-center">
+            <div
+              role="alert"
+              className="mt-5 rounded-xl border border-red-900/60 bg-red-950/30 px-4 py-3 text-sm text-red-300"
+            >
               {error}
             </div>
           )}
 
           {success && (
-            <div className="mt-4 rounded-lg border border-green-500/20 bg-green-500/10 px-4 py-2.5 text-xs text-green-300 text-center">
+            <div
+              role="status"
+              className="mt-5 rounded-xl border border-emerald-900/60 bg-emerald-950/30 px-4 py-3 text-sm text-emerald-300"
+            >
               {success}
             </div>
           )}
 
-          <div className="mt-6 text-center">
+          {/* Back to Login */}
+          <div className="mt-7 border-t border-slate-800 pt-5 text-center">
             <Link
               to="/login"
-              className="text-slate-500 hover:text-slate-300 text-xs inline-flex items-center gap-1"
+              className="inline-flex items-center gap-2 text-xs font-medium text-slate-500 transition-colors hover:text-slate-300"
             >
-              <ArrowLeft size={12} />
+              <ArrowLeft size={14} />
               Back to Sign In
             </Link>
           </div>
         </div>
+
+        <p className="mt-5 text-center text-xs text-slate-600">
+          SOCRA AI · Secure Account Recovery
+        </p>
       </div>
     </div>
   );

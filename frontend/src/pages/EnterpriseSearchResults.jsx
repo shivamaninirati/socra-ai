@@ -14,8 +14,6 @@ import {
   Loader2,
   X,
   SlidersHorizontal,
-  Shield,
-  Globe,
   FolderOpen,
   Target,
 } from "lucide-react";
@@ -24,7 +22,6 @@ import SeverityBadge from "../components/SeverityBadge";
 import SearchErrorBoundary from "../components/SearchErrorBoundary";
 
 const PAGE_SIZE = 100;
-const SEVERITY_ORDER = ["Critical", "High", "Medium", "Low", "Informational"];
 
 // Client-side token extraction (display only)
 const parseQuery = (query) => {
@@ -739,7 +736,7 @@ function MitreResults({ techniques, navigate }) {
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
       {techniques.map((tech) => (
         <button
-          key={tech.id || `mitre-${tech.name || Math.random()}`}
+          key={tech.id || `mitre-${tech.name}`}
           onClick={() => navigate(`/alerts?search=mitre:${encodeURIComponent(tech.id)}`)}
           className="flex items-center gap-3 p-4 rounded-xl border border-slate-800 bg-slate-900/30 hover:border-cyan-500/40 hover:bg-slate-900/50 transition text-left"
         >

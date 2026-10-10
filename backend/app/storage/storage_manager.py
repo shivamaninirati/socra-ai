@@ -1,315 +1,355 @@
+"""Coordinate SOCRA AI's live event store and persistent SQLite storage."""
+
 import logging
 from datetime import datetime
-from typing import Dict, Any
+from typing import Any, Dict, Optional
 
 from app.collector.event_store import event_store
 from app.storage.sqlite_storage import sqlite_storage
 
-# Enterprise-grade structured logging
 logger = logging.getLogger(__name__)
 
 
 class StorageManager:
-    """Enterprise storage manager that coordinates between live in-memory store and persistent SQLite"""
-    
-    def __init__(self):
-        """Initialize storage manager with automatic persistence restoration"""
+    """Coordinate live in-memory events and persistent SQLite storage."""
+
+    NOTIFICATION_SEVERITIES = frozenset({"high", "critical"})
+
+    def __init__(self) -> None:
+        """Initialize storage manager and restore today's persisted events."""
         self.live_store = event_store
         self.history_store = sqlite_storage
-        
+
         logger.info("[StorageManager] Initializing storage manager...")
-        # On startup: load all today's events from history into live store for immediate dashboard access
         self._restore_todays_events()
         logger.info("[StorageManager] Storage manager initialization completed")
-    
-    def _restore_todays_events(self):
-        """Restore today's events from database to live store on startup"""
+
+    @staticmethod
+    def _normalize_severity(value: Any) -> str:
+        """Normalize a severity value for comparisons without guessing unknowns."""
+        if not isinstance(value, str):
+            return ""
+        return value.strip().casefold()
+
+    @classmethod
+    def _notification_severity(cls, event_data: Any) -> str:
+        """Return the severity from supported event shapes, or an empty string."""
+        if not isinstance(event_data, dict):
+            return ""
+
+        detection = event_data.get("detection")
+        if isinstance(detection, dict) and detection.get("severity") is not None:
+            return cls._normalize_severity(detection.get("severity"))
+
+        # Support existing normalized callers that place severity at the root
+        # or inside the event object. Unknown values remain ineligible.
+        root_severity = event_data.get("severity")
+        if root_severity is not None:
+            return cls._normalize_severity(root_severity)
+
+        event = event_data.get("event")
+        if isinstance(event, dict):
+            return cls._normalize_severity(event.get("severity"))
+
+        return ""
+
+    def _restore_todays_events(self) -> None:
+        """Restore today's events from SQLite into the live store on startup."""
         try:
-            start_time = datetime.now()
+            started = datetime.now()
             todays_events = self.history_store.get_todays_events()
-            logger.info(f"[StorageManager] Found {len(todays_events)} today's events in persistence")
-            
+            logger.info(
+                "[StorageManager] Found %d today's events in persistence",
+                len(todays_events),
+            )
+
             for event in todays_events:
                 self.live_store.add_event(event)
-            
-            restore_duration = (datetime.now() - start_time).total_seconds()
-            logger.info(f"[StorageManager] Successfully restored {len(todays_events)} events in {restore_duration:.2f}s - dashboard will show complete data immediately")
-        except Exception as e:
-            logger.error(f"[StorageManager] Critical failure during event restoration: {str(e)}", exc_info=True)
-    
-    def invalidate_cache(self):
-        """Invalidate analytics cache when new events are added to keep metrics fresh"""
+
+            elapsed = (datetime.now() - started).total_seconds()
+            logger.info(
+                "[StorageManager] Restored %d events in %.2fs",
+                len(todays_events),
+                elapsed,
+            )
+        except Exception:
+            logger.exception("[StorageManager] Failed to restore today's events")
+
+    def invalidate_cache(self) -> None:
+        """Invalidate cached dashboard analytics after storage changes."""
         try:
             from app.analytics.analytics_engine import analytics_engine
+
             with analytics_engine.cache_lock:
                 analytics_engine.cache.pop("dashboard", None)
                 analytics_engine.cache_timestamps.pop("dashboard", None)
         except Exception:
-            # Fail silently - cache invalidation is non-critical
-            pass
+            # Analytics cache invalidation is best-effort and must not break
+            # event collection or notification persistence.
+            logger.debug("[StorageManager] Analytics cache invalidation skipped", exc_info=True)
 
-    # ---------------------------------------------------------
-    # Save Event
-    # ---------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Events
+    # ------------------------------------------------------------------
 
     def add_event(self, event: Dict[str, Any]) -> None:
-        """Add an event to both live store and persistent storage
-        
-        Automatically invalidates analytics cache to ensure fresh metrics.
-        """
-        # Add to live in-memory store for real-time access
+        """Add an event to the live store and enqueue it for SQLite persistence."""
         try:
             self.live_store.add_event(event)
-        except Exception as e:
-            logger.error(f"[StorageManager] Live storage write failure: {str(e)}", exc_info=True)
+        except Exception:
+            logger.exception("[StorageManager] Live storage write failure")
 
-        # Persist to SQLite database for durability
         try:
             save_success = self.history_store.save_event(event)
             if not save_success:
                 logger.warning("[StorageManager] History store rejected event (queue full)")
-        except Exception as e:
-            logger.error(f"[StorageManager] History storage write failure: {str(e)}", exc_info=True)
-            
-        # Invalidate analytics cache to ensure dashboard shows updated metrics
+        except Exception:
+            logger.exception("[StorageManager] History storage write failure")
+
         self.invalidate_cache()
 
-    # ---------------------------------------------------------
-    # Live Events
-    # ---------------------------------------------------------
-
     def get_live_events(self):
-
+        """Return live events, or an empty list if the live store is unavailable."""
         try:
-
             return self.live_store.get_events()
-
         except Exception:
-
+            logger.exception("[StorageManager] Failed to read live events")
             return []
 
-    # ---------------------------------------------------------
-    # Historical Events
-    # ---------------------------------------------------------
-
-    def get_history_events(self, limit=100000):
-
+    def get_history_events(self, limit: int = 100000):
+        """Return persisted events, or an empty list if storage is unavailable."""
         try:
-
             return self.history_store.get_events(limit)
-
         except Exception:
-
+            logger.exception("[StorageManager] Failed to read historical events")
             return []
 
-    # ---------------------------------------------------------
-    # Unified Event Source
-    # ---------------------------------------------------------
-
-    def get_events(self, source="live", limit=100000):
-
+    def get_events(self, source: str = "live", limit: int = 100000):
+        """Return events from the requested source: live, history, or all."""
         if source == "history":
-
             return self.get_history_events(limit)
-
-        elif source == "all":
-
-            return (
-
-                self.get_live_events()
-
-                +
-
-                self.get_history_events(limit)
-
-            )
-
+        if source == "all":
+            return self.get_live_events() + self.get_history_events(limit)
         return self.get_live_events()
 
-    # ---------------------------------------------------------
-    # Get Today's Events (Analytics Only)
-    # ---------------------------------------------------------
+    @staticmethod
+    def _event_fingerprint(event: Any) -> Optional[str]:
+        """Read a fingerprint safely from an event, if one exists."""
+        if not isinstance(event, dict):
+            return None
+        metadata = event.get("metadata")
+        if not isinstance(metadata, dict):
+            return None
+        fingerprint = metadata.get("fingerprint")
+        return str(fingerprint) if fingerprint else None
+
     def get_todays_events(self):
-        """Get all events from today (both live and history) for analytics"""
+        """Get today's events from live and persisted stores, deduplicated by fingerprint."""
         live_events = self.get_live_events()
         todays_history_events = self.history_store.get_todays_events()
-        # Combine and deduplicate events (keep most recent)
         seen = set()
         combined = []
+
         for event in live_events + todays_history_events:
-            fp = event.get("metadata", {}).get("fingerprint")
-            if fp and fp not in seen:
-                seen.add(fp)
-                combined.append(event)
-            elif not fp:
-                combined.append(event)
+            fingerprint = self._event_fingerprint(event)
+            if fingerprint:
+                if fingerprint in seen:
+                    continue
+                seen.add(fingerprint)
+            combined.append(event)
         return combined
 
     def get_todays_events_with_seq(self):
-        """Atomically return (today's deduplicated events, current_seq).
-
-        The live snapshot and its sequence watermark are read together so the
-        seq the frontend receives exactly matches the events the dashboard
-        totals were computed from — the REST/WebSocket sync boundary.
-        """
+        """Return today's deduplicated events and the corresponding live sequence watermark."""
         live_events, seq = self.live_store.snapshot_events()
         todays_history_events = self.history_store.get_todays_events()
         seen = set()
         combined = []
+
         for event in live_events + todays_history_events:
-            fp = event.get("metadata", {}).get("fingerprint")
-            if fp and fp not in seen:
-                seen.add(fp)
-                combined.append(event)
-            elif not fp:
-                combined.append(event)
+            fingerprint = self._event_fingerprint(event)
+            if fingerprint:
+                if fingerprint in seen:
+                    continue
+                seen.add(fingerprint)
+            combined.append(event)
         return combined, seq
 
-    # ---------------------------------------------------------
+    # ------------------------------------------------------------------
     # Statistics
-    # ---------------------------------------------------------
+    # ------------------------------------------------------------------
 
-    def live_count(self):
-
+    def live_count(self) -> int:
+        """Return the number of events currently held in the live store."""
         try:
-
             return self.live_store.count()
-
         except Exception:
-
+            logger.exception("[StorageManager] Failed to count live events")
             return 0
 
-    def history_count(self):
-
+    def history_count(self) -> int:
+        """Return the number of persisted events."""
         try:
-
             return self.history_store.count()
-
         except Exception:
-
+            logger.exception("[StorageManager] Failed to count historical events")
             return 0
 
-    def total_count(self):
+    def total_count(self) -> int:
+        """Return the sum of live and historical counts (keeps existing semantics)."""
+        return self.live_count() + self.history_count()
 
-        return (
-
-            self.live_count()
-
-            +
-
-            self.history_count()
-
-        )    # ---------------------------------------------------------
+    # ------------------------------------------------------------------
     # Notifications
-    # ---------------------------------------------------------
+    # ------------------------------------------------------------------
 
-    def create_notification(self, user_id, event_data, fingerprint=None):
-        """Create a notification for a security event."""
-        return self.history_store.create_notification(user_id, event_data, fingerprint)
+    def create_notification(
+        self,
+        user_id: Any,
+        event_data: Dict[str, Any],
+        fingerprint: Optional[str] = None,
+    ) -> bool:
+        """Enqueue a notification only for a genuine HIGH or CRITICAL event.
+
+        The returned value indicates whether the storage layer accepted the
+        write into its queue; it does not by itself prove the transaction has
+        committed. Callers requiring durable visibility must flush the store.
+        """
+        try:
+            if user_id is None or str(user_id).strip() == "":
+                logger.warning("[StorageManager] Rejecting notification without a user ID")
+                return False
+
+            if not isinstance(event_data, dict):
+                logger.warning("[StorageManager] Rejecting notification with invalid event payload")
+                return False
+
+            severity = self._notification_severity(event_data)
+            if severity not in self.NOTIFICATION_SEVERITIES:
+                logger.debug(
+                    "[StorageManager] Notification skipped for non-eligible severity=%r",
+                    severity or "unknown",
+                )
+                return False
+
+            accepted = self.history_store.create_notification(
+                user_id, event_data, fingerprint
+            )
+            if not accepted:
+                logger.warning(
+                    "[StorageManager] Notification write was not accepted by the storage queue"
+                )
+                return False
+
+            return True
+        except Exception:
+            logger.exception("[StorageManager] Notification storage write failure")
+            return False
+        finally:
+            self.invalidate_cache()
 
     def get_today_notifications(self, user_id):
-        """Get today's notifications for a user."""
+        """Get today's persisted notifications for a specific user."""
         return self.history_store.get_today_notifications(user_id)
 
     def get_unread_count(self, user_id):
-        """Get the count of unread notifications for today."""
+        """Get the count of today's unread persisted notifications for a user."""
         return self.history_store.get_unread_count(user_id)
 
     def get_all_today_notifications(self):
-        """Get all today's notifications (for legacy users without database ID)."""
+        """Get today's notifications for the existing legacy-user flow."""
         return self.history_store.get_all_today_notifications()
 
     def get_all_unread_count(self):
-        """Get all unread notification count (for legacy users)."""
+        """Get today's unread notification count for the existing legacy-user flow."""
         return self.history_store.get_all_unread_count()
 
     def mark_notification_read(self, notification_id, user_id):
-        """Mark a single notification as read."""
+        """Mark one persisted notification as read and flush queued writes."""
         result = self.history_store.mark_notification_read(notification_id, user_id)
         self.history_store.flush()
         return result
 
     def mark_all_notifications_read(self, user_id):
-        """Mark all of a user's notifications as read."""
+        """Mark all of a user's persisted notifications as read."""
         result = self.history_store.mark_all_notifications_read(user_id)
         self.history_store.flush()
         return result
 
-    # ---------------------------------------------------------
-    # Derived Notifications (from events table)
-    # ---------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Derived notifications (from events table)
+    # ------------------------------------------------------------------
 
-    def get_derived_notifications(self, user_id, page=1, page_size=50,
-                                  severity_filter=None):
-        """Get today's notifications derived from the events table."""
+    def get_derived_notifications(
+        self, user_id, page: int = 1, page_size: int = 50, severity_filter=None
+    ):
+        """Get today's HIGH/CRITICAL notifications derived from persisted events."""
         return self.history_store.get_derived_notifications(
-            user_id, page=page, page_size=page_size,
-            severity_filter=severity_filter
+            user_id,
+            page=page,
+            page_size=page_size,
+            severity_filter=severity_filter,
         )
 
     def get_derived_unread_count(self, user_id):
-        """Get unread notification count derived from events."""
+        """Get the unread count for the existing event-derived notification flow."""
         return self.history_store.get_derived_unread_count(user_id)
 
     def mark_derived_read(self, user_id, alert_id):
-        """Mark a single derived notification as read."""
+        """Mark one event-derived notification as read."""
         result = self.history_store.mark_derived_read(user_id, alert_id)
         self.history_store.flush(timeout=10.0)
         return result
 
     def mark_all_derived_read(self, user_id):
-        """Mark all of a user's notifications as read."""
+        """Mark all event-derived notifications as read for the user."""
         result = self.history_store.mark_all_derived_read(user_id)
         self.history_store.flush(timeout=10.0)
         return result
 
-    # ---------------------------------------------------------
-    # Security Attention Memory — Lifecycle
-    # ---------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Security attention lifecycle
+    # ------------------------------------------------------------------
 
     def get_notification_summary(self, user_id):
         """Get severity counts for active notifications."""
         return self.history_store.get_notification_summary(user_id)
 
     def acknowledge_notification(self, user_id, notification_id):
-        """Acknowledge a single notification."""
+        """Acknowledge one notification and flush the queued write."""
         result = self.history_store.acknowledge_notification(user_id, notification_id)
         self.history_store.flush(timeout=10.0)
         return result
 
     def resolve_notification(self, user_id, notification_id):
-        """Resolve a single notification."""
+        """Resolve one notification and flush the queued write."""
         result = self.history_store.resolve_notification(user_id, notification_id)
         self.history_store.flush(timeout=10.0)
         return result
 
-    # ---------------------------------------------------------
-    # User Management
-    # ---------------------------------------------------------
+    # ------------------------------------------------------------------
+    # User management
+    # ------------------------------------------------------------------
 
     def get_all_users(self):
-        """Get all active users."""
+        """Return active users known to the persistence layer."""
         return self.history_store.get_all_users()
 
-    # ---------------------------------------------------------
-    # Clear Storage
-    # ---------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Clear storage (destructive; preserve existing explicit method)
+    # ------------------------------------------------------------------
 
-    def clear(self):
-
+    def clear(self) -> None:
+        """Clear live and persistent stores; call only from explicit admin workflows."""
         try:
             self.live_store.clear()
-
         except Exception:
-
-            pass
+            logger.exception("[StorageManager] Failed to clear live store")
 
         try:
             self.history_store.clear()
-
         except Exception:
-
-            pass
+            logger.exception("[StorageManager] Failed to clear history store")
 
 
 storage_manager = StorageManager()

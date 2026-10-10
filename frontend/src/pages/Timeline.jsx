@@ -1,29 +1,77 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { 
-  AlertCircle, Terminal,
-  Filter, Monitor, Clock3, Eye,
-  ArrowUpRight, ListTree, Calendar, ChevronLeft, ChevronRight, ChevronDown
+import {
+  AlertCircle,
+  Terminal,
+  Filter,
+  Monitor,
+  Clock3,
+  Eye,
+  ArrowUpRight,
+  ListTree,
+  Calendar,
+  ChevronLeft,
+  ChevronRight,
+  ChevronDown,
 } from "lucide-react";
 import liveSocket from "../services/liveSocket";
 import api from "../services/api";
 import Dropdown from "../components/ui/Dropdown";
 
-const severityColor = (sev) => {
-  switch ((sev || "").toLowerCase()) {
-    case "critical": return { dot: "bg-red-500", text: "text-red-400", bg: "bg-red-500/10", border: "border-red-500/30", glow: "shadow-red-500/20" };
-    case "high": return { dot: "bg-orange-500", text: "text-orange-400", bg: "bg-orange-500/10", border: "border-orange-500/30", glow: "shadow-orange-500/20" };
-    case "medium": return { dot: "bg-yellow-500", text: "text-yellow-400", bg: "bg-yellow-500/10", border: "border-yellow-500/30", glow: "shadow-yellow-500/20" };
-    case "low": return { dot: "bg-green-500", text: "text-green-400", bg: "bg-green-500/10", border: "border-green-500/30", glow: "shadow-green-500/20" };
-    default: return { dot: "bg-slate-500", text: "text-slate-400", bg: "bg-slate-500/10", border: "border-slate-500/30", glow: "shadow-slate-500/20" };
+const severityColor = (severity) => {
+  switch ((severity || "").toLowerCase()) {
+    case "critical":
+      return {
+        dot: "bg-red-500",
+        text: "text-red-400",
+        bg: "bg-red-500/10",
+        border: "border-red-500/25",
+      };
+    case "high":
+      return {
+        dot: "bg-orange-500",
+        text: "text-orange-400",
+        bg: "bg-orange-500/10",
+        border: "border-orange-500/25",
+      };
+    case "medium":
+      return {
+        dot: "bg-amber-500",
+        text: "text-amber-400",
+        bg: "bg-amber-500/10",
+        border: "border-amber-500/25",
+      };
+    case "low":
+      return {
+        dot: "bg-emerald-500",
+        text: "text-emerald-400",
+        bg: "bg-emerald-500/10",
+        border: "border-emerald-500/25",
+      };
+    default:
+      return {
+        dot: "bg-slate-500",
+        text: "text-slate-400",
+        bg: "bg-slate-500/10",
+        border: "border-slate-500/25",
+      };
   }
 };
 
-const normalizeSeverity = (sev) => {
-  const s = (sev || "").toLowerCase();
-  if (["", "unknown", "none", "null", "info", "informational"].includes(s)) return "Informational";
-  const cap = sev.charAt(0).toUpperCase() + sev.slice(1).toLowerCase();
-  return ["Critical", "High", "Medium", "Low"].includes(cap) ? cap : "Informational";
+const normalizeSeverity = (severity) => {
+  const value = (severity || "").toLowerCase();
+
+  if (
+    ["", "unknown", "none", "null", "info", "informational"].includes(value)
+  ) {
+    return "Informational";
+  }
+
+  const capitalized = value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
+
+  return ["Critical", "High", "Medium", "Low"].includes(capitalized)
+    ? capitalized
+    : "Informational";
 };
 
 const RANGE_OPTIONS = [
@@ -44,8 +92,6 @@ const DEFAULT_FILTER_OPTIONS = {
   severities: ["All", "Critical", "High", "Medium", "Low", "Informational"],
 };
 
-
-
 function Timeline() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -57,42 +103,46 @@ function Timeline() {
   const [expandedEvent, setExpandedEvent] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
 
-  // Server-side time range + pagination
   const [range, setRange] = useState("all");
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
   const [appliedFrom, setAppliedFrom] = useState("");
   const [appliedTo, setAppliedTo] = useState("");
   const [page, setPage] = useState(1);
-  const [limit] = useState(100);
+  const limit = 100;
   const [total, setTotal] = useState(0);
   const [pages, setPages] = useState(1);
   const [refreshKey, setRefreshKey] = useState(0);
 
-  // Server-side filters. The host filter initializes from Enterprise Search
-  // navigation (/timeline?host=X) so the requested host is applied immediately.
   const [filterSeverity, setFilterSeverity] = useState("All");
-  const [filterHost, setFilterHost] = useState(() => searchParams.get("host") || "All");
+  const [filterHost, setFilterHost] = useState(
+    () => searchParams.get("host") || "All"
+  );
   const [filterMitre, setFilterMitre] = useState("All");
   const [filterEventId, setFilterEventId] = useState("All");
   const [filterProcess, setFilterProcess] = useState("All");
   const [filterUser, setFilterUser] = useState("All");
   const [filterOptions, setFilterOptions] = useState(DEFAULT_FILTER_OPTIONS);
 
-  const handleFilterChange = (setter) => (value) => { setter(value); setPage(1); };
+  const handleFilterChange = (setter) => (value) => {
+    setter(value);
+    setPage(1);
+  };
 
-  // Single server-side fetch path: time range, filters and pagination are all
-  // sent to the backend and only the requested page is loaded into the browser.
   useEffect(() => {
     let cancelled = false;
+
     async function load() {
       try {
         setError("");
+
         const params = { range, page, limit };
+
         if (range === "custom") {
           if (appliedFrom) params.from = new Date(appliedFrom).toISOString();
           if (appliedTo) params.to = new Date(appliedTo).toISOString();
         }
+
         if (filterHost !== "All") params.host = filterHost;
         if (filterUser !== "All") params.user = filterUser;
         if (filterProcess !== "All") params.process = filterProcess;
@@ -101,107 +151,203 @@ function Timeline() {
         if (filterMitre !== "All") params.mitre = filterMitre;
 
         const response = await api.get("/timeline/events", { params });
+
         if (cancelled) return;
+
         setEvents(response.data.results || []);
         setTotal(response.data.total || 0);
         setPages(response.data.pages || 1);
         setLastUpdated(new Date());
       } catch (err) {
         console.error("Timeline fetch error:", err);
-        if (!cancelled) setError("Could not load timeline data. Check the backend connection and try again.");
+
+        if (!cancelled) {
+          setError(
+            "Could not load timeline data. Check the backend connection and try again."
+          );
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
     }
-    load();
-    return () => { cancelled = true; };
-  }, [range, page, limit, appliedFrom, appliedTo, filterHost, filterUser, filterProcess, filterEventId, filterSeverity, filterMitre, refreshKey]);
 
-  // Filter option values come from the backend (real telemetry), so the
-  // dropdowns are complete regardless of which page is loaded.
+    load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    range,
+    page,
+    limit,
+    appliedFrom,
+    appliedTo,
+    filterHost,
+    filterUser,
+    filterProcess,
+    filterEventId,
+    filterSeverity,
+    filterMitre,
+    refreshKey,
+  ]);
+
   useEffect(() => {
-    api.get("/timeline/filters")
-      .then((res) => {
-        const d = res.data || {};
+    api
+      .get("/timeline/filters")
+      .then((response) => {
+        const data = response.data || {};
+
         setFilterOptions({
-          hosts: d.hosts?.length ? d.hosts : DEFAULT_FILTER_OPTIONS.hosts,
-          users: d.users?.length ? d.users : DEFAULT_FILTER_OPTIONS.users,
-          processes: d.processes?.length ? d.processes : DEFAULT_FILTER_OPTIONS.processes,
-          eventIds: d.event_ids?.length ? d.event_ids : DEFAULT_FILTER_OPTIONS.eventIds,
-          mitres: d.mitres?.length ? d.mitres : DEFAULT_FILTER_OPTIONS.mitres,
-          severities: d.severities?.length ? d.severities : DEFAULT_FILTER_OPTIONS.severities,
+          hosts: data.hosts?.length
+            ? data.hosts
+            : DEFAULT_FILTER_OPTIONS.hosts,
+          users: data.users?.length
+            ? data.users
+            : DEFAULT_FILTER_OPTIONS.users,
+          processes: data.processes?.length
+            ? data.processes
+            : DEFAULT_FILTER_OPTIONS.processes,
+          eventIds: data.event_ids?.length
+            ? data.event_ids
+            : DEFAULT_FILTER_OPTIONS.eventIds,
+          mitres: data.mitres?.length
+            ? data.mitres
+            : DEFAULT_FILTER_OPTIONS.mitres,
+          severities: data.severities?.length
+            ? data.severities
+            : DEFAULT_FILTER_OPTIONS.severities,
         });
       })
       .catch((err) => console.error("Timeline filter options error:", err));
   }, []);
 
-  const mapLiveEvent = useCallback((a) => ({
-    timestamp: a.event?.time,
-    event_id: String(a.event?.event_id || ""),
-    user: a.event?.user || "SYSTEM",
-    process: a.event?.process_name || "Not available in event",
-    host: a.event?.host || a.event?.computer || "Unknown",
-    action: a.detection?.detection || "Security Event",
-    severity: normalizeSeverity(a.detection?.severity),
-    mitre_id: (a.detection?.mitre && typeof a.detection.mitre === "object" ? a.detection.mitre.id : a.detection?.mitre) || "Unmapped",
-    details: {
-      command_line: a.event?.command_line || "",
-      parent_process: a.event?.parent_process || a.event?.parent_image || "N/A",
-      description: a.detection?.description || "",
+  const mapLiveEvent = useCallback(
+    (alert) => ({
+      timestamp: alert.event?.time,
+      event_id: String(alert.event?.event_id || ""),
+      user: alert.event?.user || "SYSTEM",
+      process: alert.event?.process_name || "Not available in event",
+      host: alert.event?.host || alert.event?.computer || "Unknown",
+      action: alert.detection?.detection || "Security Event",
+      severity: normalizeSeverity(alert.detection?.severity),
+      mitre_id:
+        (alert.detection?.mitre &&
+        typeof alert.detection.mitre === "object"
+          ? alert.detection.mitre.id
+          : alert.detection?.mitre) || "Unmapped",
+      details: {
+        command_line: alert.event?.command_line || "",
+        parent_process:
+          alert.event?.parent_process || alert.event?.parent_image || "N/A",
+        description: alert.detection?.description || "",
+      },
+      fingerprint: alert.metadata?.fingerprint,
+    }),
+    []
+  );
+
+  const inTimeRange = useCallback(
+    (timestamp) => {
+      if (!timestamp) return true;
+
+      const time = new Date(timestamp).getTime();
+      if (Number.isNaN(time)) return true;
+
+      const now = Date.now();
+
+      if (range === "today") {
+        const start = new Date();
+        start.setHours(0, 0, 0, 0);
+        return time >= start.getTime();
+      }
+
+      if (range === "last_24h") return time >= now - 24 * 3600 * 1000;
+      if (range === "last_7d") return time >= now - 7 * 24 * 3600 * 1000;
+      if (range === "last_30d") return time >= now - 30 * 24 * 3600 * 1000;
+
+      if (range === "custom") {
+        if (appliedFrom && new Date(appliedFrom).getTime() > time) return false;
+        if (appliedTo && new Date(appliedTo).getTime() < time) return false;
+      }
+
+      return true;
     },
-    fingerprint: a.metadata?.fingerprint,
-  }), []);
+    [range, appliedFrom, appliedTo]
+  );
 
-  const inTimeRange = useCallback((ts) => {
-    if (!ts) return true;
-    const t = new Date(ts).getTime();
-    if (Number.isNaN(t)) return true;
-    const now = Date.now();
-    if (range === "today") {
-      const start = new Date(); start.setHours(0, 0, 0, 0);
-      return t >= start.getTime();
-    }
-    if (range === "last_24h") return t >= now - 24 * 3600 * 1000;
-    if (range === "last_7d") return t >= now - 7 * 24 * 3600 * 1000;
-    if (range === "last_30d") return t >= now - 30 * 24 * 3600 * 1000;
-    if (range === "custom") {
-      if (appliedFrom && new Date(appliedFrom).getTime() > t) return false;
-      if (appliedTo && new Date(appliedTo).getTime() < t) return false;
-    }
-    return true;
-  }, [range, appliedFrom, appliedTo]);
+  const matchesFilters = useCallback(
+    (event) => {
+      if (
+        filterSeverity !== "All" &&
+        (event.severity || "").toLowerCase() !== filterSeverity.toLowerCase()
+      ) {
+        return false;
+      }
 
-  const matchesFilters = useCallback((e) => {
-    if (filterSeverity !== "All" && (e.severity || "").toLowerCase() !== filterSeverity.toLowerCase()) return false;
-    if (filterHost !== "All" && e.host !== filterHost) return false;
-    if (filterMitre !== "All" && e.mitre_id !== filterMitre) return false;
-    if (filterEventId !== "All" && String(e.event_id) !== filterEventId) return false;
-    if (filterProcess !== "All") {
-      const proc = (e.process || "").split("\\").pop();
-      if (proc !== filterProcess) return false;
-    }
-    if (filterUser !== "All" && e.user !== filterUser) return false;
-    return true;
-  }, [filterSeverity, filterHost, filterMitre, filterEventId, filterProcess, filterUser]);
+      if (filterHost !== "All" && event.host !== filterHost) return false;
+      if (filterMitre !== "All" && event.mitre_id !== filterMitre) return false;
+      if (
+        filterEventId !== "All" &&
+        String(event.event_id) !== filterEventId
+      ) {
+        return false;
+      }
 
-  // Live WebSocket events: prepend real events as they stream in, deduped
-  // against persisted events by fingerprint, respecting the active filters.
+      if (filterProcess !== "All") {
+        const process = (event.process || "").split("\\").pop();
+        if (process !== filterProcess) return false;
+      }
+
+      if (filterUser !== "All" && event.user !== filterUser) return false;
+
+      return true;
+    },
+    [
+      filterSeverity,
+      filterHost,
+      filterMitre,
+      filterEventId,
+      filterProcess,
+      filterUser,
+    ]
+  );
+
   useEffect(() => {
-    const handler = (msg) => {
-      if (!msg || !msg.type || (msg.type !== "alert" && msg.type !== "incident")) return;
-      const live = mapLiveEvent(msg);
-      if (!inTimeRange(live.timestamp)) return;
-      if (!matchesFilters(live)) return;
-      setEvents((prev) => {
-        const key = (e) => e.fingerprint || `${e.timestamp}-${e.event_id}`;
-        const existing = new Set(prev.map(key));
-        if (existing.has(key(live))) return prev;
-        const merged = [live, ...prev];
-        merged.sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
+    const handler = (message) => {
+      if (
+        !message ||
+        !message.type ||
+        !["alert", "incident"].includes(message.type)
+      ) {
+        return;
+      }
+
+      const liveEvent = mapLiveEvent(message);
+
+      if (!inTimeRange(liveEvent.timestamp)) return;
+      if (!matchesFilters(liveEvent)) return;
+
+      setEvents((previous) => {
+        const key = (event) =>
+          event.fingerprint || `${event.timestamp}-${event.event_id}`;
+
+        const existing = new Set(previous.map(key));
+
+        if (existing.has(key(liveEvent))) return previous;
+
+        const merged = [liveEvent, ...previous];
+
+        merged.sort(
+          (a, b) =>
+            new Date(b.timestamp || 0) - new Date(a.timestamp || 0)
+        );
+
         return merged.slice(0, 2000);
       });
     };
+
     liveSocket.subscribe(handler);
+
     return () => liveSocket.unsubscribe(handler);
   }, [mapLiveEvent, inTimeRange, matchesFilters]);
 
@@ -216,36 +362,54 @@ function Timeline() {
             process_name: event.process,
             user: event.user,
             command_line: event.details?.command_line,
-            parent_process_name: event.details?.parent_process
+            parent_process_name: event.details?.parent_process,
           },
           detection: {
             severity: event.severity,
             detection: event.action,
             mitre: { id: event.mitre_id },
-            description: event.details?.description || ""
-          }
-        }
-      }
+            description: event.details?.description || "",
+          },
+        },
+      },
     });
   };
 
-  const formatTime = (t) => {
-    if (!t) return { time: "-", date: "" };
+  const formatTime = (timestamp) => {
+    if (!timestamp) return { time: "-", date: "" };
+
     try {
-      const d = new Date(t);
+      const date = new Date(timestamp);
+
       return {
-        time: d.toLocaleTimeString("en-GB", { hour12: false }),
-        date: d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })
+        time: date.toLocaleTimeString("en-GB", { hour12: false }),
+        date: date.toLocaleDateString("en-GB", {
+          day: "2-digit",
+          month: "short",
+          year: "numeric",
+        }),
       };
-    } catch { return { time: t, date: "" }; }
+    } catch {
+      return { time: timestamp, date: "" };
+    }
   };
 
-  const activeFilters = [filterSeverity, filterHost, filterMitre, filterEventId, filterProcess, filterUser]
-    .filter(v => v !== "All").length;
+  const activeFilters = [
+    filterSeverity,
+    filterHost,
+    filterMitre,
+    filterEventId,
+    filterProcess,
+    filterUser,
+  ].filter((value) => value !== "All").length;
 
   const clearFilters = () => {
-    setFilterSeverity("All"); setFilterHost("All"); setFilterMitre("All");
-    setFilterEventId("All"); setFilterProcess("All"); setFilterUser("All");
+    setFilterSeverity("All");
+    setFilterHost("All");
+    setFilterMitre("All");
+    setFilterEventId("All");
+    setFilterProcess("All");
+    setFilterUser("All");
     setPage(1);
   };
 
@@ -258,249 +422,404 @@ function Timeline() {
   const shownCount = useMemo(() => events.length, [events]);
 
   return (
-    <div className="w-full pb-8 space-y-5 select-none">
-      <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 pt-4">
+    <div className="w-full space-y-5 pb-8 select-none">
+      {/* Header */}
+      <div className="flex flex-col justify-between gap-3 pt-4 sm:flex-row sm:items-center">
         <div>
           <div className="flex items-center gap-3">
-            <h1 className="text-xl font-extrabold tracking-tight text-white flex items-center gap-2">
-              <Clock3 size={20} className="text-cyan-400" />
+            <h1 className="flex items-center gap-2 text-xl font-extrabold tracking-tight text-slate-100">
+              <Clock3 size={20} className="text-slate-400" />
               <span>Forensic Timeline</span>
             </h1>
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-[9px] font-black tracking-widest uppercase">
-              <span className="w-1 h-1 rounded-full bg-cyan-400 animate-pulse" />
-              LIVE
+
+            <span className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/15 bg-emerald-500/5 px-2 py-0.5 text-[9px] font-bold uppercase tracking-widest text-emerald-400">
+              <span className="h-1 w-1 animate-pulse rounded-full bg-emerald-400" />
+              Live
             </span>
           </div>
-          <p className="text-xs text-slate-500 font-medium mt-1.5">
-            Chronological event sequence — {shownCount} of {total} matching events
-            {lastUpdated ? ` · Last sync: ${lastUpdated.toLocaleTimeString("en-GB")}` : ""}
+
+          <p className="mt-1.5 text-xs font-medium text-slate-500">
+            Chronological event sequence — {shownCount} of {total} matching
+            events
+            {lastUpdated
+              ? ` · Last sync: ${lastUpdated.toLocaleTimeString("en-GB")}`
+              : ""}
           </p>
         </div>
+
         <div className="flex items-center gap-2">
           {activeFilters > 0 && (
             <button
               onClick={clearFilters}
-              className="px-2.5 py-1.5 bg-red-500/10 text-red-400 border border-red-500/20 rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-red-500/20 transition-all"
+              className="rounded-lg border border-slate-700/70 bg-slate-900/70 px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400 transition hover:border-slate-600 hover:text-slate-200"
             >
               Clear Filters ({activeFilters})
             </button>
           )}
+
           <button
-            onClick={() => setRefreshKey((k) => k + 1)}
-            className="px-3 py-1.5 bg-slate-800/60 border border-slate-700/60 text-xs font-bold text-slate-300 rounded-lg hover:bg-slate-700/60 transition-all"
+            onClick={() => setRefreshKey((key) => key + 1)}
+            className="rounded-lg border border-slate-700/70 bg-slate-900/70 px-3 py-1.5 text-xs font-semibold text-slate-300 transition hover:border-slate-600 hover:bg-slate-800 hover:text-white"
           >
             Refresh
           </button>
         </div>
       </div>
 
-      <div className="flex items-center gap-2 flex-wrap p-3 bg-slate-900/30 border border-slate-800/60 rounded-xl">
-        <Filter size={13} className="text-slate-500 shrink-0" />
+      {/* Filters */}
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+        <Filter size={13} className="mr-1 shrink-0 text-slate-500" />
+
         <div className="min-w-[140px]">
           <Dropdown
             value={range}
-            onChange={(v) => { setRange(v); setPage(1); }}
-            options={RANGE_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+            onChange={(value) => {
+              setRange(value);
+              setPage(1);
+            }}
+            options={RANGE_OPTIONS}
             ariaLabel="Time range"
           />
         </div>
-        <div className="w-px h-5 bg-slate-800/80 mx-1 shrink-0" />
+
+        <div className="mx-1 h-5 w-px shrink-0 bg-slate-800" />
+
         <div className="min-w-[140px]">
-          <Dropdown value={filterSeverity} onChange={handleFilterChange(setFilterSeverity)}
-            options={filterOptions.severities.map((s) => ({ value: s, label: s }))} ariaLabel="Severity" />
+          <Dropdown
+            value={filterSeverity}
+            onChange={handleFilterChange(setFilterSeverity)}
+            options={filterOptions.severities.map((value) => ({
+              value,
+              label: value,
+            }))}
+            ariaLabel="Severity"
+          />
         </div>
+
         <div className="min-w-[140px]">
-          <Dropdown value={filterHost} onChange={handleFilterChange(setFilterHost)}
-            options={filterOptions.hosts.map((h) => ({ value: h, label: h }))} ariaLabel="Host" searchable clearable />
+          <Dropdown
+            value={filterHost}
+            onChange={handleFilterChange(setFilterHost)}
+            options={filterOptions.hosts.map((value) => ({
+              value,
+              label: value,
+            }))}
+            ariaLabel="Host"
+            searchable
+            clearable
+          />
         </div>
+
         <div className="min-w-[140px]">
-          <Dropdown value={filterMitre} onChange={handleFilterChange(setFilterMitre)}
-            options={filterOptions.mitres.map((m) => ({ value: m, label: m }))} ariaLabel="MITRE" searchable clearable />
+          <Dropdown
+            value={filterMitre}
+            onChange={handleFilterChange(setFilterMitre)}
+            options={filterOptions.mitres.map((value) => ({
+              value,
+              label: value,
+            }))}
+            ariaLabel="MITRE"
+            searchable
+            clearable
+          />
         </div>
+
         <div className="min-w-[140px]">
-          <Dropdown value={filterEventId} onChange={handleFilterChange(setFilterEventId)}
-            options={filterOptions.eventIds.map((e) => ({ value: e, label: e }))} ariaLabel="Event ID" searchable clearable />
+          <Dropdown
+            value={filterEventId}
+            onChange={handleFilterChange(setFilterEventId)}
+            options={filterOptions.eventIds.map((value) => ({
+              value,
+              label: value,
+            }))}
+            ariaLabel="Event ID"
+            searchable
+            clearable
+          />
         </div>
+
         <div className="min-w-[140px]">
-          <Dropdown value={filterProcess} onChange={handleFilterChange(setFilterProcess)}
-            options={filterOptions.processes.map((p) => ({ value: p, label: p }))} ariaLabel="Process" searchable clearable />
+          <Dropdown
+            value={filterProcess}
+            onChange={handleFilterChange(setFilterProcess)}
+            options={filterOptions.processes.map((value) => ({
+              value,
+              label: value,
+            }))}
+            ariaLabel="Process"
+            searchable
+            clearable
+          />
         </div>
+
         <div className="min-w-[140px]">
-          <Dropdown value={filterUser} onChange={handleFilterChange(setFilterUser)}
-            options={filterOptions.users.map((u) => ({ value: u, label: u }))} ariaLabel="User" searchable clearable />
+          <Dropdown
+            value={filterUser}
+            onChange={handleFilterChange(setFilterUser)}
+            options={filterOptions.users.map((value) => ({
+              value,
+              label: value,
+            }))}
+            ariaLabel="User"
+            searchable
+            clearable
+          />
         </div>
       </div>
 
       {error && (
-        <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+        <div className="rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3 text-sm text-red-300">
           {error}
         </div>
       )}
 
+      {/* Custom date range */}
       {range === "custom" && (
-        <div className="flex items-center gap-3 flex-wrap p-3 bg-slate-900/30 border border-slate-800/60 rounded-xl">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-            <Calendar size={11} /> Custom Range
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+          <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-slate-500">
+            <Calendar size={12} />
+            Custom Range
           </span>
-          <label className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-slate-600">
+
+          <label className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">
             From
             <input
               type="datetime-local"
               value={customFrom}
-              onChange={(e) => setCustomFrom(e.target.value)}
-              className="bg-slate-900/60 border border-slate-700/60 rounded-lg px-2 py-1.5 text-xs text-slate-300 font-medium normal-case tracking-normal"
+              onChange={(event) => setCustomFrom(event.target.value)}
+              className="rounded-lg border border-slate-700/70 bg-slate-900 px-2 py-1.5 text-xs font-medium normal-case tracking-normal text-slate-300 outline-none transition focus:border-slate-600"
             />
           </label>
-          <label className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-slate-600">
+
+          <label className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">
             To
             <input
               type="datetime-local"
               value={customTo}
-              onChange={(e) => setCustomTo(e.target.value)}
-              className="bg-slate-900/60 border border-slate-700/60 rounded-lg px-2 py-1.5 text-xs text-slate-300 font-medium normal-case tracking-normal"
+              onChange={(event) => setCustomTo(event.target.value)}
+              className="rounded-lg border border-slate-700/70 bg-slate-900 px-2 py-1.5 text-xs font-medium normal-case tracking-normal text-slate-300 outline-none transition focus:border-slate-600"
             />
           </label>
+
           <button
             onClick={applyCustomRange}
-            className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-[10px] font-bold rounded-lg transition-all"
+            className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-[10px] font-bold text-slate-200 transition hover:bg-slate-700"
           >
             Apply
           </button>
         </div>
       )}
 
-      <div className="w-full bg-slate-900/20 border border-slate-800/80 rounded-xl min-h-[55vh]">
+      {/* Timeline */}
+      <div className="min-h-[55vh] w-full rounded-xl border border-slate-800/80 bg-slate-950/30">
         {loading ? (
           <div className="flex flex-col items-center justify-center py-24">
-            <div className="animate-spin rounded-full h-10 w-10 border-4 border-cyan-500 border-t-transparent mb-4"></div>
-            <p className="text-slate-500 text-xs animate-pulse">Loading forensic timeline data...</p>
+            <div className="mb-4 h-9 w-9 animate-spin rounded-full border-2 border-slate-700 border-t-slate-300" />
+            <p className="animate-pulse text-xs text-slate-500">
+              Loading forensic timeline data...
+            </p>
           </div>
         ) : events.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24">
-            <div className="p-3 bg-slate-950/40 border border-slate-800 rounded-xl mb-3 text-slate-600">
+            <div className="mb-3 rounded-xl border border-slate-800 bg-slate-900/60 p-3 text-slate-500">
               <AlertCircle size={24} />
             </div>
-            <h2 className="text-xs font-bold text-slate-400 tracking-wider uppercase">No Timeline Events</h2>
-            <p className="text-[11px] text-slate-600 max-w-xs mt-1">
-              {activeFilters > 0 || range !== "all" ? "No events match the current filter criteria." : "No forensic timeline events available."}
+
+            <h2 className="text-xs font-bold uppercase tracking-wider text-slate-300">
+              No Timeline Events
+            </h2>
+
+            <p className="mt-1 max-w-xs text-center text-[11px] text-slate-500">
+              {activeFilters > 0 || range !== "all"
+                ? "No events match the current filter criteria."
+                : "No forensic timeline events available."}
             </p>
           </div>
         ) : (
-          <div className="relative pl-8 pr-4 py-6 space-y-0">
-            <div className="absolute left-[27px] top-0 bottom-0 w-[2px] bg-slate-800/60" />
-            
+          <div className="relative space-y-0 py-6 pl-8 pr-4">
+            <div className="absolute bottom-0 left-[27px] top-0 w-px bg-slate-800" />
+
             {events.map((event, index) => {
               const colors = severityColor(event.severity);
-              const ts = formatTime(event.timestamp);
+              const timestamp = formatTime(event.timestamp);
               const isSelected = selectedEvent === event;
               const isExpanded = expandedEvent === index;
 
               return (
-                <div key={`${event.timestamp}-${event.event_id}-${index}`} className="relative group">
+                <div
+                  key={`${event.timestamp}-${event.event_id}-${index}`}
+                  className="group relative"
+                >
                   <div className="absolute left-[-31px] top-5 z-10">
-                    <div className={`w-4 h-4 rounded-full ${colors.bg} border-2 ${colors.border} flex items-center justify-center shadow-lg ${colors.glow}`}>
-                      <div className={`w-1.5 h-1.5 rounded-full ${colors.dot}`} />
+                    <div
+                      className={`flex h-4 w-4 items-center justify-center rounded-full border-2 ${colors.bg} ${colors.border}`}
+                    >
+                      <div className={`h-1.5 w-1.5 rounded-full ${colors.dot}`} />
                     </div>
                   </div>
 
-                  <div 
-                    onClick={() => { setSelectedEvent(event); setExpandedEvent(isExpanded ? null : index); }}
-                    className={`ml-4 mb-3 p-4 rounded-xl border transition-all duration-150 cursor-pointer ${
+                  <div
+                    onClick={() => {
+                      setSelectedEvent(event);
+                      setExpandedEvent(isExpanded ? null : index);
+                    }}
+                    className={`mb-3 ml-4 cursor-pointer rounded-xl border p-4 transition-colors duration-150 ${
                       isSelected
-                        ? "bg-slate-800/60 border-cyan-500/40 shadow-lg shadow-cyan-950/10"
-                        : "bg-slate-900/30 border-slate-800/40 hover:border-slate-700/60 hover:bg-slate-800/30"
+                        ? "border-slate-600 bg-slate-800/60"
+                        : "border-slate-800/70 bg-slate-900/40 hover:border-slate-700 hover:bg-slate-900/80"
                     }`}
                   >
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                      <div className="flex items-center gap-3 flex-1 min-w-0">
-                        <div className={`w-1 h-8 rounded-full ${colors.dot} shrink-0`} />
-                        
+                    <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
+                      <div className="flex min-w-0 flex-1 items-center gap-3">
+                        <div className={`h-8 w-1 shrink-0 rounded-full ${colors.dot}`} />
+
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
-                            <h3 className={`text-sm font-bold ${colors.text} truncate`}>
+                            <h3 className={`truncate text-sm font-bold ${colors.text}`}>
                               {event.action || "Security Event"}
                             </h3>
-                            {event.mitre_id && event.mitre_id !== "N/A" && event.mitre_id !== "Unknown" && event.mitre_id !== "Unmapped" && (
-                              <span className="text-[9px] font-mono font-bold text-purple-400 bg-purple-500/10 border border-purple-500/20 px-1.5 py-0.5 rounded shrink-0">
-                                {event.mitre_id}
-                              </span>
-                            )}
+
+                            {event.mitre_id &&
+                              !["N/A", "Unknown", "Unmapped"].includes(
+                                event.mitre_id
+                              ) && (
+                                <span className="shrink-0 rounded border border-purple-500/20 bg-purple-500/5 px-1.5 py-0.5 font-mono text-[9px] font-bold text-purple-400">
+                                  {event.mitre_id}
+                                </span>
+                              )}
                           </div>
-                          <div className="flex items-center gap-2 mt-1">
-                            <span className="text-[11px] font-mono text-slate-500">{ts.time}</span>
+
+                          <div className="mt-1 flex items-center gap-2">
+                            <span className="font-mono text-[11px] text-slate-500">
+                              {timestamp.time}
+                            </span>
+
                             <span className="text-[10px] text-slate-700">•</span>
-                            <span className="text-[11px] text-slate-400 truncate flex items-center gap-1">
-                              <Monitor size={10} className="text-slate-600 shrink-0" />
+
+                            <span className="flex min-w-0 items-center gap-1 truncate text-[11px] text-slate-400">
+                              <Monitor
+                                size={10}
+                                className="shrink-0 text-slate-500"
+                              />
                               {event.host || "Unknown"}
                             </span>
                           </div>
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span className="text-[10px] font-mono font-bold text-cyan-500/80 bg-cyan-500/10 border border-cyan-500/20 px-1.5 py-0.5 rounded">
+                      <div className="flex shrink-0 items-center gap-2">
+                        <span className="rounded border border-slate-700/70 bg-slate-950/60 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-slate-400">
                           EID: {event.event_id || "-"}
                         </span>
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${colors.bg} ${colors.text} ${colors.border} border`}>
+
+                        <span
+                          className={`rounded border px-2 py-0.5 text-[10px] font-bold ${colors.bg} ${colors.text} ${colors.border}`}
+                        >
                           {event.severity || "Info"}
                         </span>
-                        <ChevronDown size={12} className={`text-slate-600 transition-transform duration-150 ${isExpanded ? "rotate-180" : ""}`} />
+
+                        <ChevronDown
+                          size={13}
+                          className={`text-slate-500 transition-transform duration-150 ${
+                            isExpanded ? "rotate-180" : ""
+                          }`}
+                        />
                       </div>
                     </div>
 
                     {isExpanded && (
-                      <div className="mt-3 pt-3 border-t border-slate-800/60 space-y-3 animate-fadeIn">
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                          <div className="p-2 bg-slate-900/40 rounded-lg">
-                            <p className="text-[9px] uppercase tracking-widest text-slate-600 font-bold">Process</p>
-                            <p className="text-xs font-mono text-cyan-400 mt-0.5 truncate">{(event.process || "Not available in event").split("\\").pop()}</p>
+                      <div className="mt-4 space-y-3 border-t border-slate-800/80 pt-3">
+                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                          <div className="rounded-lg border border-slate-800/60 bg-slate-950/50 p-2">
+                            <p className="text-[9px] font-bold uppercase tracking-widest text-slate-500">
+                              Process
+                            </p>
+                            <p className="mt-1 truncate font-mono text-xs text-slate-300">
+                              {(event.process || "Not available in event")
+                                .split("\\")
+                                .pop()}
+                            </p>
                           </div>
-                          <div className="p-2 bg-slate-900/40 rounded-lg">
-                            <p className="text-[9px] uppercase tracking-widest text-slate-600 font-bold">User</p>
-                            <p className="text-xs text-slate-300 mt-0.5 truncate">{event.user || "N/A"}</p>
+
+                          <div className="rounded-lg border border-slate-800/60 bg-slate-950/50 p-2">
+                            <p className="text-[9px] font-bold uppercase tracking-widest text-slate-500">
+                              User
+                            </p>
+                            <p className="mt-1 truncate text-xs text-slate-300">
+                              {event.user || "N/A"}
+                            </p>
                           </div>
-                          <div className="p-2 bg-slate-900/40 rounded-lg">
-                            <p className="text-[9px] uppercase tracking-widest text-slate-600 font-bold">Date</p>
-                            <p className="text-xs text-slate-400 mt-0.5">{ts.date || "-"}</p>
+
+                          <div className="rounded-lg border border-slate-800/60 bg-slate-950/50 p-2">
+                            <p className="text-[9px] font-bold uppercase tracking-widest text-slate-500">
+                              Date
+                            </p>
+                            <p className="mt-1 text-xs text-slate-400">
+                              {timestamp.date || "-"}
+                            </p>
                           </div>
-                          <div className="p-2 bg-slate-900/40 rounded-lg">
-                            <p className="text-[9px] uppercase tracking-widest text-slate-600 font-bold">MITRE</p>
-                            <p className={"text-xs font-mono mt-0.5 " + (event.mitre_id && event.mitre_id !== "Unmapped" ? "text-purple-400" : "text-slate-600")}>
+
+                          <div className="rounded-lg border border-slate-800/60 bg-slate-950/50 p-2">
+                            <p className="text-[9px] font-bold uppercase tracking-widest text-slate-500">
+                              MITRE
+                            </p>
+                            <p
+                              className={`mt-1 font-mono text-xs ${
+                                event.mitre_id && event.mitre_id !== "Unmapped"
+                                  ? "text-purple-400"
+                                  : "text-slate-500"
+                              }`}
+                            >
                               {event.mitre_id || "Unmapped"}
                             </p>
                           </div>
                         </div>
 
                         {event.details?.command_line && (
-                          <div className="p-2.5 bg-slate-900/40 rounded-lg border border-slate-800/40">
-                            <div className="flex items-center gap-1.5 mb-1">
-                              <Terminal size={11} className="text-cyan-500" />
-                              <span className="text-[9px] uppercase tracking-wider text-slate-600 font-bold">Command Line</span>
+                          <div className="rounded-lg border border-slate-800/70 bg-slate-950/70 p-3">
+                            <div className="mb-2 flex items-center gap-1.5">
+                              <Terminal size={12} className="text-slate-400" />
+                              <span className="text-[9px] font-bold uppercase tracking-widest text-slate-500">
+                                Command Line
+                              </span>
                             </div>
-                            <pre className="text-[11px] text-emerald-400 font-mono whitespace-pre-wrap break-all">{event.details.command_line}</pre>
+
+                            <pre className="whitespace-pre-wrap break-all font-mono text-[11px] text-emerald-400">
+                              {event.details.command_line}
+                            </pre>
                           </div>
                         )}
 
                         {event.details?.description && (
-                          <p className="text-xs text-slate-500 leading-6">{event.details.description}</p>
+                          <p className="text-xs leading-6 text-slate-400">
+                            {event.details.description}
+                          </p>
                         )}
 
-                        {event.details?.parent_process && event.details.parent_process !== "N/A" && (
-                          <div className="flex items-center gap-1.5 text-[10px] text-slate-500">
-                            <ListTree size={11} className="text-slate-600" />
-                            <span className="font-bold uppercase tracking-wider text-slate-600">Parent:</span>
-                            <span className="font-mono text-slate-400">{event.details.parent_process}</span>
-                          </div>
-                        )}
+                        {event.details?.parent_process &&
+                          event.details.parent_process !== "N/A" && (
+                            <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
+                              <ListTree size={12} className="text-slate-500" />
+                              <span className="font-bold uppercase tracking-wider text-slate-500">
+                                Parent:
+                              </span>
+                              <span className="break-all font-mono">
+                                {event.details.parent_process}
+                              </span>
+                            </div>
+                          )}
 
                         <div className="flex justify-end">
                           <button
-                            onClick={(e) => { e.stopPropagation(); openInvestigation(event); }}
-                            className="flex items-center gap-1.5 px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-[10px] font-bold rounded-lg transition-all"
+                            onClick={(clickEvent) => {
+                              clickEvent.stopPropagation();
+                              openInvestigation(event);
+                            }}
+                            className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-[10px] font-semibold text-slate-200 transition hover:border-slate-600 hover:bg-slate-700 hover:text-white"
                           >
-                            <Eye size={11} />
+                            <Eye size={12} />
                             Open in Investigation
-                            <ArrowUpRight size={10} />
+                            <ArrowUpRight size={11} />
                           </button>
                         </div>
                       </div>
@@ -513,37 +832,38 @@ function Timeline() {
         )}
       </div>
 
+      {/* Pagination */}
       {total > 0 && (
-        <div className="flex items-center justify-between px-3 py-2 bg-slate-900/30 border border-slate-800/60 rounded-xl">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+        <div className="flex flex-col justify-between gap-3 rounded-xl border border-slate-800/80 bg-slate-950/40 px-3 py-3 sm:flex-row sm:items-center">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
             Page {page} of {pages} · {total} events
           </span>
+
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
               disabled={page <= 1}
-              className="inline-flex items-center gap-1 rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-slate-700 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+              className="inline-flex items-center gap-1 rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-slate-700 hover:bg-slate-800 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
             >
-              <ChevronLeft size={14} /> Previous
+              <ChevronLeft size={14} />
+              Previous
             </button>
-            <span className="rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2 text-xs font-semibold text-slate-400">
-              Page {page} / {pages}
+
+            <span className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2 text-xs font-semibold text-slate-400">
+              {page} / {pages}
             </span>
+
             <button
-              onClick={() => setPage((p) => Math.min(pages, p + 1))}
+              onClick={() => setPage((current) => Math.min(pages, current + 1))}
               disabled={page >= pages}
-              className="inline-flex items-center gap-1 rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-slate-700 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+              className="inline-flex items-center gap-1 rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-slate-700 hover:bg-slate-800 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
             >
-              Next <ChevronRight size={14} />
+              Next
+              <ChevronRight size={14} />
             </button>
           </div>
         </div>
       )}
-
-      <style dangerouslySetInnerHTML={{__html: `
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
-        .animate-fadeIn { animation: fadeIn 0.15s ease-out forwards; }
-      `}} />
     </div>
   );
 }

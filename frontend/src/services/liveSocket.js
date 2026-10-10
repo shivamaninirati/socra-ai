@@ -1,3 +1,5 @@
+import api from "./api";
+
 // Freeze a direct reference to the browser's raw, un-overridden native WebSocket constructor.
 // This prevents Vite's development HMR client from intercepting our query configurations.
 const NativeWebSocket = window.WebSocket || WebSocket;
@@ -39,7 +41,7 @@ class LiveSocket {
     this._destroyed = false;
   }
 
-  connect() {
+  async connect() {
     // An explicit connect() call always means "the app wants a live socket
     // now". Reset any prior hard teardown (_destroyed) so a fresh login (or a
     // StrictMode remount) can establish a new connection after destroy().
@@ -75,29 +77,55 @@ class LiveSocket {
     // API base host (https → wss in production, no hardcoded URLs).
     const wsBase = resolveWsBase();
 
-    // Never send the JWT over an insecure WebSocket when the app itself is
-    // served over HTTPS — a ws:// downgrade would leak the token. Without the
-    // token the server rejects the handshake (4401), the correct fail-safe
-    // until a secure endpoint is configured.
+    // Never request an authenticated WebSocket over an insecure transport
+    // when the app itself is served over HTTPS — a ws:// downgrade could
+    // leak the handshake ticket. Without a ticket the server rejects the
+    // handshake (4401), the correct fail-safe until a secure endpoint is
+    // configured.
     const pageIsSecure = typeof window !== "undefined" && window.location.protocol === "https:";
     const wsIsSecure = wsBase.startsWith("wss:");
-    const canAttachToken = Boolean(token) && (!pageIsSecure || wsIsSecure);
+    const canRequestTicket = Boolean(token) && (!pageIsSecure || wsIsSecure);
 
     if (token && pageIsSecure && !wsIsSecure) {
       console.warn(
-        "⚠️ Refusing to send JWT over an insecure WebSocket. " +
+        "⚠️ Refusing to request a WebSocket ticket for an insecure WebSocket. " +
         "Configure VITE_WS_URL with wss:// for HTTPS deployments."
       );
     }
 
-    // The JWT travels as a WebSocket subprotocol (Sec-WebSocket-Protocol
-    // header) — never in the URL — so it cannot leak into access/proxy logs.
+    // Exchange the JWT for a short-lived, single-use WebSocket ticket over
+    // authenticated HTTP (POST /live/ws-ticket). The JWT itself NEVER travels
+    // on the WebSocket connection — not in the URL, not in a header — and the
+    // ticket is consumed server-side during the first handshake attempt.
+    let ticket = null;
+    if (canRequestTicket) {
+      try {
+        const response = await api.post("/live/ws-ticket");
+        ticket = response?.data?.ticket || null;
+      } catch (ticketError) {
+        // Never log credentials. The handshake below then fails closed
+        // (4401) and the normal reconnect/backoff path applies.
+        console.warn(
+          "⚠️ WebSocket ticket request failed:",
+          ticketError?.response?.status ?? ticketError?.message
+        );
+      }
+    }
+
+    // The connection may have been torn down (destroy()/disconnect()) while
+    // the ticket request was in flight — do not open a socket afterwards.
+    if (this._destroyed || this.connectionState !== "connecting") {
+      return;
+    }
+
     const wsUrl = `${wsBase}/live/live`;
-    const protocols = canAttachToken ? [token] : [];
+    // The ticket is offered as a WebSocket subprotocol so it never appears
+    // in the URL. The server accepts WITHOUT echoing any subprotocol back,
+    // so the credential is never reflected to the client.
+    const protocols = ticket ? [`socra.ticket.${ticket}`] : [];
 
     try {
-      // Force use of the isolated native browser constructor. The JWT (when
-      // allowed) is offered as the WebSocket subprotocol for the handshake.
+      // Force use of the isolated native browser constructor.
       this.socket = new NativeWebSocket(wsUrl, protocols);
 
       this.socket.onopen = () => {
@@ -179,9 +207,8 @@ class LiveSocket {
 
     this.reconnectTimeout = setTimeout(() => {
       this.reconnectTimeout = null;
-      // A reconnect timer firing IS the intent to connect. Clear the
-      // 'reconnecting' marker first, otherwise connect() skips itself
-      // ("already in reconnecting state") and the socket never reconnects.
+      // Always explicitly set state to disconnected before attempting to reconnect
+      // Fixes race condition where state might not be properly reset if multiple reconnects fire
       this.connectionState = "disconnected";
       this.connect();
     }, jitter);
@@ -247,7 +274,7 @@ class LiveSocket {
         // established" console error — detach first, then close anyway during
         // a deliberate teardown; the detached callbacks make it inert.
         socket.close();
-      } catch (e) {
+      } catch {
         // Socket already closed or aborting — nothing to do.
       }
     }

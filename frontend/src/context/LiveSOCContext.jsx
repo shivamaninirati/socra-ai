@@ -168,6 +168,11 @@ export function LiveSOCProvider({ children }) {
   // notification_update frame.  NotificationBell uses this as a dependency
   // to re-fetch unread count and notification list — no polling needed.
   const [notificationUpdateTick, setNotificationUpdateTick] = useState(0);
+  // Track seen notification fingerprints to prevent duplicate toasts.
+  // When the backend creates a notification for a new HIGH/CRITICAL alert,
+  // it broadcasts notification_update. We use this ref to track which
+  // fingerprints we've already shown a toast for.
+  const seenNotificationFingerprintsRef = useRef(new Set());
 
   const accRef = useRef(createInitialAccumulator());
   const epsPruneInterval = useRef(null);
@@ -481,6 +486,22 @@ export function LiveSOCProvider({ children }) {
         // Bump the tick so NotificationBell re-fetches its unread count
         // and notification list in real time.
         setNotificationUpdateTick((prev) => prev + 1);
+        // Also surface the latest HIGH/CRITICAL event as a toast candidate.
+        // The latestEvent is already set by handleAlertEvent for live alerts,
+        // but notification_update can arrive for events that were backfilled
+        // or created through other paths. Only trigger if we haven't seen
+        // this fingerprint before.
+        if (latestEventRef.current && notificationsEnabledRef.current) {
+          const fp = latestEventRef.current?.metadata?.fingerprint;
+          if (fp && !seenNotificationFingerprintsRef.current.has(fp)) {
+            seenNotificationFingerprintsRef.current.add(fp);
+            // Keep the set bounded to prevent memory leaks
+            if (seenNotificationFingerprintsRef.current.size > 10000) {
+              const old = seenNotificationFingerprintsRef.current.values().next().value;
+              if (old) seenNotificationFingerprintsRef.current.delete(old);
+            }
+          }
+        }
         break;
       default: break;
     }

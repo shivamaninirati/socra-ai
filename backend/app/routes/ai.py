@@ -2,7 +2,8 @@ from typing import Optional
 import asyncio
 from functools import partial
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.auth.dependencies import get_current_user
@@ -27,12 +28,13 @@ processing_conversations = set()
 
 # Idle timeout for the per-conversation queue worker (seconds). After this
 # long with no new messages the worker shuts down and is re-spawned on demand.
-QUEUE_IDLE_TIMEOUT_SECONDS = 2.0
+# Increased from 2s to 30s to prevent premature worker shutdown during normal
+# conversation pauses.
+QUEUE_IDLE_TIMEOUT_SECONDS = 30.0
 
 # Upper bound on how long a /chat request waits for its own queued answer.
-# Ollama can be slow on cold loads; this only guards against a wedged worker
-# (e.g. a future that is never resolved) so requests never hang forever.
-CHAT_TIMEOUT_SECONDS = 600
+# Reduced from 600s to 120s to match Ollama timeout and prevent indefinite hangs.
+CHAT_TIMEOUT_SECONDS = 120
 
 
 class InvestigationRequest(BaseModel):
@@ -171,11 +173,20 @@ async def process_conversation_queue(conversation_id, user_id):
                     })
 
                 # Run blocking Ollama call in thread pool to avoid blocking event loop
+                # Add a timeout around the Ollama call to prevent indefinite hangs
                 loop = asyncio.get_running_loop()
-                answer = await loop.run_in_executor(
-                    None,
-                    partial(chat.ask, request_question, conversation_history=conversation_history)
-                )
+                try:
+                    answer = await asyncio.wait_for(
+                        loop.run_in_executor(
+                            None,
+                            partial(chat.ask, request_question, conversation_history=conversation_history)
+                        ),
+                        timeout=120.0  # 120 second timeout per message
+                    )
+                except asyncio.TimeoutError:
+                    answer = "# SOCRA AI Unavailable\n\nRequest timed out after 120 seconds. The model may be too slow or the prompt too complex."
+                except Exception as e:
+                    answer = f"# SOCRA AI Unavailable\n\nUnexpected error during generation: {str(e)}"
 
                 # Ollama returns a clearly-marked error banner (never an answer)
                 # when the service/model is unavailable or the request times out.
@@ -305,6 +316,102 @@ async def ai_chat(request: ChatWithConversationRequest, user: dict = Depends(get
             "success": False,
             "error": str(e),
             "detail": "Failed to queue chat request."
+        }
+
+
+@router.post("/chat/stream")
+async def ai_chat_stream(request: ChatWithConversationRequest, user: dict = Depends(get_current_user)):
+    """Stream a chat response using Server-Sent Events (SSE) for faster perceived latency.
+
+    This endpoint bypasses the queue and streams the response directly for lower latency
+    on single messages. For production use with conversation history, consider using the
+    queued /chat endpoint to maintain correct multi-turn ordering.
+    """
+    user_id = user.get("sub") or user.get("user_id")
+
+    if not request.question.strip():
+        return {
+            "success": False,
+            "error": "Question cannot be empty."
+        }
+
+    try:
+        # Get or create conversation
+        conversation_id = request.conversation_id
+        conversation = None
+
+        if conversation_id:
+            conversation = sqlite_storage.get_conversation(conversation_id, user_id)
+
+        if not conversation:
+            conversation = sqlite_storage.create_conversation(
+                user_id,
+                title="New Conversation",
+                context=request.context
+            )
+            conversation_id = conversation["id"]
+
+        # Build message history for streaming
+        history_messages = sqlite_storage.get_conversation_messages(
+            conversation_id, user_id, limit=50
+        )
+        conversation_history = []
+        for msg in history_messages:
+            conversation_history.append({
+                "role": msg["role"],
+                "content": msg["content"]
+            })
+
+        async def generate():
+            try:
+                # Save user message first
+                sqlite_storage.add_message(conversation_id, "user", request.question)
+                sqlite_storage.flush(timeout=3.0)
+
+                # Auto-generate title
+                conv_check = sqlite_storage.get_conversation(conversation_id, user_id)
+                if conv_check and (not conv_check.get("title") or conv_check.get("title") == "New Conversation"):
+                    auto_title = request.question[:80].strip()
+                    if len(request.question) > 80:
+                        last_space = auto_title.rfind(" ")
+                        if last_space > 40:
+                            auto_title = auto_title[:last_space]
+                        auto_title += "..."
+                    sqlite_storage.update_conversation_title(conversation_id, auto_title)
+
+                full_answer = ""
+                async for chunk in chat.ask_stream(request.question, conversation_history=conversation_history):
+                    full_answer += chunk
+                    yield f"data: {chunk}\n\n"
+
+                # Save assistant response
+                sqlite_storage.add_message(conversation_id, "assistant", full_answer, status="completed")
+                sqlite_storage.flush(timeout=3.0)
+
+                yield f"data: [DONE]\n\n"
+
+            except Exception as e:
+                error_msg = f"Unable to generate response: {str(e)}"
+                yield f"data: {error_msg}\n\n"
+                yield f"data: [DONE]\n\n"
+
+        return StreamingResponse(
+            generate(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            }
+        )
+
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error("Failed to stream chat: %s", e, exc_info=True)
+        return {
+            "success": False,
+            "error": str(e),
+            "detail": "Failed to stream chat response."
         }
 
 

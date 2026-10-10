@@ -166,15 +166,29 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in settings.CORS_ORIGINS.split(",") if o.strip()],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept"],
+    expose_headers=["Content-Length", "X-Request-Id"],
+    max_age=3600,
 )
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    """Adds basic security headers to every response (CSP, framing, sniffing)."""
+    """Adds basic security headers to every response (CSP, framing, sniffing).
+
+    CORS preflight (OPTIONS) requests are handled by Starlette's CORSMiddleware
+    before this middleware runs, so they never reach the security headers path
+    and are never blocked by the strict CSP.
+    """
 
     async def dispatch(self, request: StarletteRequest, call_next):
+        # Let CORS preflight (OPTIONS) requests pass without applying the
+        # strict CSP — they are handled by CORSMiddleware upstream and must
+        # not be blocked by the main application's Content-Security-Policy.
+        if request.method == "OPTIONS":
+            response: StarletteResponse = await call_next(request)
+            return response
+
         response: StarletteResponse = await call_next(request)
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("X-Frame-Options", "DENY")

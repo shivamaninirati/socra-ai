@@ -2,6 +2,8 @@ import asyncio
 from datetime import datetime
 
 from app.collector.windows_reader import WindowsEventReader
+from app.collector.sysmon_reader import SysmonReader
+from app.collector.source_manager import source_manager
 
 from app.storage.storage_manager import storage_manager
 from app.services.event_processor import EventProcessor
@@ -13,6 +15,30 @@ class CollectorService:
     def __init__(self):
 
         self.windows = WindowsEventReader()
+
+        self.sysmon = SysmonReader()
+
+        # The shared source_manager is the active registry (the collection
+        # loop reads exactly what is registered there). Re-register OUR
+        # Windows instance so the Security-channel privilege filter applied
+        # in start() governs the registered source too — one instance only.
+        source_manager.register("windows", self.windows)
+
+        self.source_status = {
+            "windows": {
+                "available": True,
+                "detail": None,
+                "last_error": None,
+                "last_success": None,
+            }
+        }
+
+        # Re-probe the optional Sysmon channel every ~5 minutes (1s cadence)
+        self.sysmon_reprobe_cycles = 300
+        self.sysmon_probe_cycles = 0  # probe immediately at start
+
+        # Per-cycle read cap across all sources (unchanged from previous 100)
+        self.read_limit = 100
 
         self.processor = EventProcessor()
 
@@ -73,6 +99,136 @@ class CollectorService:
     # Start Collector
     # ---------------------------------------------------------
 
+    # ---------------------------------------------------------
+    # Sources (Windows + optional Sysmon)
+    # ---------------------------------------------------------
+
+    def _probe_sysmon(self):
+        """Register (or drop) the optional Sysmon source based on a real probe.
+
+        Sysmon is never assumed: when the channel is missing the source is
+        simply not registered, its unavailability is recorded in
+        source_status, and the probe repeats every sysmon_reprobe_cycles so a
+        later Sysmon install is picked up without restarting the collector.
+        """
+        ok, detail = self.sysmon.is_available()
+        status = self.source_status.setdefault("sysmon", {})
+        status["available"] = bool(ok)
+        status["detail"] = detail
+        status["last_error"] = None if ok else (detail or "Sysmon channel unavailable")
+        registered = "sysmon" in source_manager.get_all()
+        if ok and not registered:
+            source_manager.register("sysmon", self.sysmon)
+            print(
+                "[Collector] Sysmon channel available — source registered "
+                "(Microsoft-Windows-Sysmon/Operational)"
+            )
+        elif not ok and registered:
+            source_manager.unregister("sysmon")
+            print(f"[Collector] Sysmon source removed: {status['last_error']}")
+        elif not ok:
+            print(
+                f"[Collector] Sysmon optional source not available: "
+                f"{status['last_error']} "
+                f"(re-probe every {self.sysmon_reprobe_cycles}s)"
+            )
+        self.sysmon_probe_cycles = self.sysmon_reprobe_cycles
+
+    def _read_sources(self):
+        """Read every registered source with per-source isolation.
+
+        A source that fails is recorded in source_status and skipped for this
+        cycle — one unavailable source never stops the others. The merged
+        batch keeps the previous contract: newest first, capped at read_limit.
+        """
+        batch = []
+        for name, reader in list(source_manager.get_all().items()):
+            status = self.source_status.setdefault(
+                name,
+                {
+                    "available": True,
+                    "detail": None,
+                    "last_error": None,
+                    "last_success": None,
+                },
+            )
+            try:
+                events = reader.read_latest(self.read_limit) or []
+            except Exception as e:
+                status["available"] = False
+                status["last_error"] = str(e)
+                self.last_error = f"{name}: {e}"
+                print(f"[Collector] {name} source read failed: {e}")
+                if name == "sysmon":
+                    # Re-probe next cycle: the channel may have been removed.
+                    self.sysmon_probe_cycles = 0
+                continue
+            status["available"] = True
+            status["last_error"] = None
+            status["last_success"] = datetime.utcnow().isoformat()
+            channel_errors = getattr(reader, "channel_errors", None)
+            if channel_errors:
+                status["channel_errors"] = dict(channel_errors)
+            else:
+                status.pop("channel_errors", None)
+            batch.extend(events)
+        batch.sort(key=lambda x: x.get("time", ""), reverse=True)
+        return batch[: self.read_limit]
+
+    def filter_new_events(self, events):
+        """Validate events and return only those past the per-channel watermark.
+
+        Watermarks advance in memory here; the loop still persists each
+        event's watermark right before processing it (unchanged crash
+        semantics). Also recovers from a restarted channel: when a batch's
+        newest record for a channel sits BELOW the stored watermark, the
+        watermark is stale (log cleared/rotated) and is reset — otherwise
+        every future event on that channel would be dropped forever.
+        """
+        newest = {}
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            channel = event.get("channel")
+            if not channel:
+                continue
+            try:
+                record = int(event.get("record_number"))
+            except (TypeError, ValueError):
+                continue
+            if record > newest.get(channel, -1):
+                newest[channel] = record
+
+        for channel, record in newest.items():
+            last = self.last_records.get(channel, 0)
+            if last and record < last:
+                print(
+                    f"[Collector] {channel}: record numbering restarted "
+                    f"({record} < saved {last}) — resetting watermark"
+                )
+                self.last_records[channel] = 0
+
+        fresh = []
+        for event in events:
+            if not self.validate_event(event):
+                self.total_failed += 1
+                continue
+            channel = event["channel"]
+            try:
+                record = int(event["record_number"])
+            except (TypeError, ValueError):
+                self.total_failed += 1
+                continue
+            if record <= self.last_records.get(channel, 0):
+                continue
+            self.last_records[channel] = record
+            fresh.append(event)
+        return fresh
+
+    # ---------------------------------------------------------
+    # Start Collector
+    # ---------------------------------------------------------
+
     async def start(self):
 
         if self.running:
@@ -122,6 +278,8 @@ class CollectorService:
             ]
 
         print("=" * 60)
+        self._probe_sysmon()
+
         print("[SOCRA] Native Collector Started")
         print("=" * 60)
 
@@ -131,7 +289,12 @@ class CollectorService:
 
                 self.last_collection_time = datetime.utcnow()
 
-                events = self.windows.read_latest(100)
+                if self.sysmon_probe_cycles <= 0:
+                    self._probe_sysmon()
+                else:
+                    self.sysmon_probe_cycles -= 1
+
+                events = self._read_sources()
 
                 if not events:
 
@@ -143,7 +306,7 @@ class CollectorService:
 
                 new_events = 0
 
-                for event in events:
+                for event in self.filter_new_events(events):
 
                     try:
 
@@ -159,7 +322,7 @@ class CollectorService:
 
                         last_record = self.last_records.get(channel, 0)
 
-                        if record <= last_record:
+                        if record < last_record:  # dedup already applied by filter_new_events()
                             continue
 
                         self.last_records[channel] = record
@@ -321,6 +484,8 @@ class CollectorService:
             "security_log_accessible": self.security_log_accessible,
 
             "privilege_error": self.privilege_error,
+
+            "source_status": dict(self.source_status),
 
             "sources": [
 

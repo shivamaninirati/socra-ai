@@ -43,6 +43,11 @@ def security_log_access():
         if winerror == ERROR_PRIVILEGE_NOT_HELD:
             return False, PRIVILEGE_ERROR_MESSAGE
         return False, f"Security Event Log access failed: {exc}"
+    except Exception as exc:
+        # The probe contract is (ok, detail) for ANY failure — it must never
+        # raise into its caller (start()/standalone), or the collector would
+        # crash instead of reporting the unavailable channel.
+        return False, f"Security Event Log access failed: {exc}"
     finally:
         if handle is not None:
             try:

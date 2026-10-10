@@ -6,7 +6,6 @@ import {
 } from "lucide-react";
 
 function SeverityBadge({ severity = "Unknown" }) {
-
     let config = {
         bg: "bg-slate-500/15",
         border: "border-slate-500/30",
@@ -16,7 +15,6 @@ function SeverityBadge({ severity = "Unknown" }) {
     };
 
     switch (severity) {
-
         case "Critical":
             config = {
                 bg: "bg-red-500/15",
@@ -26,7 +24,6 @@ function SeverityBadge({ severity = "Unknown" }) {
                 label: "Critical",
             };
             break;
-
         case "High":
             config = {
                 bg: "bg-orange-500/15",
@@ -36,7 +33,6 @@ function SeverityBadge({ severity = "Unknown" }) {
                 label: "High",
             };
             break;
-
         case "Medium":
             config = {
                 bg: "bg-yellow-500/15",
@@ -46,7 +42,6 @@ function SeverityBadge({ severity = "Unknown" }) {
                 label: "Medium",
             };
             break;
-
         case "Low":
             config = {
                 bg: "bg-green-500/15",
@@ -56,7 +51,6 @@ function SeverityBadge({ severity = "Unknown" }) {
                 label: "Low",
             };
             break;
-
         case "Informational":
             config = {
                 bg: "bg-cyan-500/15",
@@ -66,13 +60,11 @@ function SeverityBadge({ severity = "Unknown" }) {
                 label: "Info",
             };
             break;
-
         default:
             break;
     }
 
     return (
-
         <span
             className={`
                 inline-flex
@@ -85,20 +77,17 @@ function SeverityBadge({ severity = "Unknown" }) {
                 text-xs
                 font-semibold
                 whitespace-nowrap
+                transition-colors
+                duration-150
                 ${config.bg}
                 ${config.border}
                 ${config.text}
             `}
         >
-
             {config.icon}
-
             {config.label}
-
         </span>
-
     );
-
 }
 
 export default SeverityBadge;

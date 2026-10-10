@@ -1,14 +1,23 @@
 import time
+import asyncio
 
 import ollama
+from app.core.logger import get_module_logger
+
+logger = get_module_logger("ollama_service")
 
 # Budget for a single LLM generation. Full analyses (num_predict below)
 # can take minutes on CPU when the model is cold-loaded; anything beyond
 # this hard cap is treated as a timeout so the API never hangs the analyst.
-DEFAULT_TIMEOUT_SECONDS = 300
+# Reduced from 300s to 120s to prevent indefinite hangs.
+DEFAULT_TIMEOUT_SECONDS = 120
 
 # How long to wait for the availability probe (service/model listing).
 AVAILABILITY_TIMEOUT_SECONDS = 5
+
+# Model keep-alive period to reduce cold starts (seconds).
+# 0 = unload immediately, -1 = keep loaded indefinitely.
+MODEL_KEEP_ALIVE_SECONDS = 300
 
 
 class OllamaService:
@@ -25,6 +34,16 @@ class OllamaService:
         if self.host:
             kwargs["host"] = self.host
         return ollama.Client(**kwargs)
+
+    def _generation_options(self, stream=False, num_predict=None):
+        """Return standard generation options, optionally with streaming enabled."""
+        return {
+            "temperature": 0.2,
+            "top_p": 0.9,
+            "num_predict": num_predict or 512,  # Reduced default for faster responses
+            "keep_alive": MODEL_KEEP_ALIVE_SECONDS,
+            "stream": stream,
+        }
 
     # ---------------------------------------------------------------
     # Availability / health
@@ -98,6 +117,7 @@ class OllamaService:
                 when the service/model is unavailable or times out — callers
                 must treat the banner as an error, never as telemetry.
         """
+        started = time.time()
         try:
             response = self._client().chat(
                 model=self.model,
@@ -120,15 +140,22 @@ class OllamaService:
                         "content": prompt,
                     },
                 ],
-                options={
-                    "temperature": 0.2,
-                    "top_p": 0.9,
-                    "num_predict": 900,
-                },
+                options=self._generation_options(num_predict=1024),
             )
-            return response["message"]["content"]
+            elapsed_ms = int((time.time() - started) * 1000)
+            content = response["message"]["content"]
+            logger.info(
+                "[OLLAMA_TIMING] investigate model=%s elapsed_ms=%d chars=%d",
+                self.model, elapsed_ms, len(content or "")
+            )
+            return content
 
         except Exception as e:
+            elapsed_ms = int((time.time() - started) * 1000)
+            logger.warning(
+                "[OLLAMA_TIMING] investigate FAILED model=%s elapsed_ms=%d error=%s",
+                self.model, elapsed_ms, str(e)[:200]
+            )
             return self._error_banner(str(e))
 
     def chat_with_history(self, messages):
@@ -143,20 +170,92 @@ class OllamaService:
         Returns:
             str: the model's text output, or a clearly-marked error banner.
         """
+        started = time.time()
         try:
             response = self._client().chat(
                 model=self.model,
                 messages=messages,
-                options={
-                    "temperature": 0.2,
-                    "top_p": 0.9,
-                    "num_predict": 900,
-                },
+                options=self._generation_options(num_predict=512),
             )
-            return response["message"]["content"]
+            elapsed_ms = int((time.time() - started) * 1000)
+            content = response["message"]["content"]
+            # Log timing for diagnostics — never log secrets or full prompts.
+            logger.info(
+                "[OLLAMA_TIMING] chat_with_history model=%s elapsed_ms=%d chars=%d",
+                self.model, elapsed_ms, len(content or "")
+            )
+            return content
 
         except Exception as e:
+            elapsed_ms = int((time.time() - started) * 1000)
+            logger.warning(
+                "[OLLAMA_TIMING] chat_with_history FAILED model=%s elapsed_ms=%d error=%s",
+                self.model, elapsed_ms, str(e)[:200]
+            )
             return self._error_banner(str(e))
+
+    def chat_with_history_stream(self, messages):
+        """Run a multi-turn streaming generation against Ollama.
+
+        Args:
+            messages: list of dicts with 'role' and 'content' keys.
+                      Must start with a system message, followed by
+                      alternating user/assistant messages, ending with
+                      the current user question.
+
+        Yields:
+            str: partial text chunks as they arrive, or error banner on failure.
+        """
+        # The Ollama Python client returns a synchronous generator when stream=True.
+        # We run it in a thread pool and bridge to async via a queue.
+        started = time.time()
+        queue = asyncio.Queue()
+        sentinel = object()
+
+        def _run_stream():
+            """Run the blocking stream in a thread and push chunks to the queue."""
+            try:
+                stream = self._client().chat(
+                    model=self.model,
+                    messages=messages,
+                    options=self._generation_options(stream=True, num_predict=512),
+                )
+                first_chunk = True
+                for chunk in stream:
+                    if first_chunk:
+                        elapsed_ms = int((time.time() - started) * 1000)
+                        logger.info(
+                            "[OLLAMA_TIMING] chat_with_history_stream FIRST_TOKEN model=%s elapsed_ms=%d",
+                            self.model, elapsed_ms
+                        )
+                        first_chunk = False
+                    if "message" in chunk and "content" in chunk["message"]:
+                        content = chunk["message"]["content"]
+                        if content:
+                            queue.put_nowait(content)
+                queue.put_nowait(sentinel)
+            except Exception as e:
+                queue.put_nowait(("error", e))
+
+        async def _drain():
+            """Drain the queue and yield chunks."""
+            loop = asyncio.get_running_loop()
+            # Start the blocking stream in a thread
+            loop.run_in_executor(None, _run_stream)
+            while True:
+                item = await queue.get()
+                if item is sentinel:
+                    break
+                if isinstance(item, tuple) and item[0] == "error":
+                    raise item[1]
+                yield item
+            elapsed_ms = int((time.time() - started) * 1000)
+            logger.info(
+                "[OLLAMA_TIMING] chat_with_history_stream COMPLETE model=%s elapsed_ms=%d",
+                self.model, elapsed_ms
+            )
+
+        return _drain()
 
     @staticmethod
     def _error_banner(reason):

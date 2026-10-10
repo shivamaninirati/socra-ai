@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate, useLocation, Link } from "react-router-dom";
-import { Shield, Loader2, Mail, ArrowLeft } from "lucide-react";
+import { Loader2, Mail, ArrowLeft } from "lucide-react";
 import api from "../services/api";
 
 function VerifyEmail() {

@@ -161,6 +161,7 @@ async def _status_writer(collector, privilege_error):
                     "history_events": stats.get("history_events"),
                     "last_collection_time": stats.get("last_collection_time"),
                     "last_error": stats.get("last_error"),
+                    "source_status": stats.get("source_status") or {},
                     "channels": stats.get("channels"),
                     "security_log_accessible": privilege_error is None,
                     "privilege_error": privilege_error,

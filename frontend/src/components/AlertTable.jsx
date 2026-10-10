@@ -107,10 +107,13 @@ function AlertTable({ logs = [], onSelect, onInvestigate, totalCount = 0 }) {
               const status = event.status || detection.status || "New";
               const key = log?.metadata?.fingerprint ||
                 `${event.time}-${event.event_id}-${event.record_number || index}`;
+              // Use the database alert ID for row identification (for highlighting)
+              const rowId = log._id || event.event_id || key;
 
               return (
                 <tr
                   key={key}
+                  data-log-id={rowId}
                   onClick={() => onSelect?.(log)}
                   className="cursor-pointer bg-slate-950/10 transition hover:bg-slate-900/50"
                 >

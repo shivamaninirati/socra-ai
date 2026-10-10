@@ -1,0 +1,668 @@
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import {
+  Search,
+  X,
+  Clock,
+  Sparkles,
+  ChevronDown,
+  Loader2,
+  HelpCircle,
+  AlertTriangle,
+  CheckCircle,
+  History,
+  FileJson,
+  ArrowUpRight,
+  Zap,
+} from "lucide-react";
+import api from "../services/api";
+import { isCleanSuggestion } from "./SearchSuggestionGuard";
+import { parseQuery, validateQuery, queryToBackend, SOCRA_FIELDS } from "../lib/socr-query";
+import { useAutocomplete } from "../lib/socr-query/useAutocomplete";
+
+// ===================================================================
+// SOCRA Query Language field definitions for autocomplete
+// ===================================================================
+const FIELD_SUGGESTIONS = Object.entries(SOCRA_FIELDS).map(([key, def]) => ({
+  value: `${key}:`,
+  label: key,
+  description: def.description,
+  type: def.type,
+  category: def.category,
+  examples: def.examples,
+}));
+
+const TIME_KEYWORDS = ["today", "yesterday", "last1h", "last4h", "last6h", "last12h", "last24h", "last7d", "last30d"];
+
+const SYNTAX_EXAMPLES = [
+  { label: "Free text", example: "powershell" },
+  { label: "Event ID", example: "event_id:4688" },
+  { label: "Host", example: "host:WORKSTATION01" },
+  { label: "Process", example: "process:powershell.exe" },
+  { label: "Severity", example: "severity:critical" },
+  { label: "MITRE", example: "mitre:T1059.001" },
+  { label: "Combined", example: "host:WORKSTATION01 AND event_id:4688" },
+  { label: "IOC", example: "source_ip:192.168.1.50" },
+  { label: "Time range", example: "host:WORKSTATION01 last24h" },
+];
+
+// ===================================================================
+// Enterprise Search Bar — SOCRA Query Language
+// ===================================================================
+function EnterpriseSearchBar({
+  value = "",
+  onChange,
+  onSearchSubmit,
+  totalResults = null,
+}) {
+  const [queryStr, setQueryStr] = useState(value);
+  const [isFocused, setIsFocused] = useState(false);
+  const [selectedSuggestion, setSelectedSuggestion] = useState(0);
+  const [activeField, setActiveField] = useState(null);
+  const [searching, setSearching] = useState(false);
+  const [liveSuggestions, setLiveSuggestions] = useState(null);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+  const [serverHistory, setServerHistory] = useState([]);
+  const [validationErrors, setValidationErrors] = useState([]);
+  const [showPreview, setShowPreview] = useState(false);
+
+  const inputRef = useRef(null);
+  const containerRef = useRef(null);
+  const suggestionsFetchRef = useRef(null);
+  const helpRef = useRef(null);
+
+  // Autocomplete hook
+  const autocomplete = useAutocomplete(queryStr, (val) => {
+    setQueryStr(val);
+    onChange?.(val);
+  });
+
+  // Sync external value
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (value !== undefined && value !== queryStr) {
+        setQueryStr(value);
+      }
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [value]);
+
+  // Parse query on change + detect active field
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (queryStr.endsWith(":") || queryStr.endsWith("=")) {
+        const lastColon = queryStr.slice(0, -1).lastIndexOf(":");
+        const lastEq = queryStr.slice(0, -1).lastIndexOf("=");
+        const splitIdx = Math.max(lastColon, lastEq);
+        if (splitIdx >= 0) {
+          const field = queryStr.slice(Math.max(queryStr.lastIndexOf(" ", splitIdx - 1) + 1, 0), splitIdx).trim();
+          setActiveField(field.toLowerCase());
+        } else {
+          setActiveField(null);
+        }
+      } else {
+        setActiveField(null);
+      }
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [queryStr]);
+
+  // Validate query on change
+  useEffect(() => {
+    if (queryStr.trim()) {
+      const ast = parseQuery(queryStr);
+      const validation = validateQuery(ast);
+      setValidationErrors(validation.errors);
+    } else {
+      setValidationErrors([]);
+    }
+  }, [queryStr]);
+
+  // Load server-side search history on mount
+  useEffect(() => {
+    let cancelled = false;
+    async function loadHistory() {
+      try {
+        const res = await api.get("/search/history");
+        if (!cancelled && res.data?.history) {
+          setServerHistory(res.data.history.map((h) => h.query));
+        }
+      } catch {
+        // Fall back to empty — history is non-critical
+      }
+    }
+    loadHistory();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Also refresh history when a search is executed
+  const refreshHistory = useCallback(async () => {
+    try {
+      const res = await api.get("/search/history");
+      if (res.data?.history) {
+        setServerHistory(res.data.history.map((h) => h.query));
+      }
+    } catch {
+      // non-critical
+    }
+  }, []);
+
+  const history = serverHistory;
+
+  // ===========================================================
+  // LIVE SUGGESTIONS: fetched from the backend (debounced)
+  // ===========================================================
+  useEffect(() => {
+    if (suggestionsFetchRef.current) {
+      clearTimeout(suggestionsFetchRef.current);
+    }
+
+    if (!queryStr.trim()) {
+      suggestionsFetchRef.current = setTimeout(() => {
+        autocomplete.clearSuggestions();
+        setLiveSuggestions(null);
+      }, 0);
+      return () => {
+        if (suggestionsFetchRef.current) clearTimeout(suggestionsFetchRef.current);
+      };
+    }
+
+    suggestionsFetchRef.current = setTimeout(async () => {
+      setSuggestionsLoading(true);
+      try {
+        const lastWord = queryStr.split(/\s+/).pop() || "";
+        const res = await api.get("/search/suggestions", {
+          params: { q: lastWord.toLowerCase() },
+        });
+        setLiveSuggestions(res.data || {});
+      } catch {
+        setLiveSuggestions(null);
+      } finally {
+        setSuggestionsLoading(false);
+      }
+    }, 250);
+
+    return () => {
+      if (suggestionsFetchRef.current) clearTimeout(suggestionsFetchRef.current);
+    };
+  }, [queryStr, autocomplete.clearSuggestions]);
+
+  // ===========================================================
+  // Build combined suggestions list
+  // ===========================================================
+  const suggestions = useMemo(() => {
+    if (!queryStr.trim()) {
+      // Show field syntax suggestions + examples when input is empty
+      return { type: "syntax", items: FIELD_SUGGESTIONS.slice(0, 8) };
+    }
+
+    const lastWord = queryStr.split(/\s+/).pop() || "";
+    const trimmed = lastWord.toLowerCase();
+
+    // If autocomplete hook has suggestions, use them
+    if (autocomplete.suggestions.length > 0) {
+      return { type: "autocomplete", items: autocomplete.suggestions };
+    }
+
+    if (activeField) {
+      let fieldKey = activeField;
+      if (fieldKey === "eventid") fieldKey = "event_ids";
+      if (fieldKey === "mitre") fieldKey = "mitre_ids";
+      if (fieldKey === "host") fieldKey = "hosts";
+      if (fieldKey === "user") fieldKey = "users";
+      if (fieldKey === "process") fieldKey = "processes";
+      if (fieldKey === "pid") fieldKey = "pids";
+      if (fieldKey === "ioc") fieldKey = "ips";
+      if (fieldKey === "severity") fieldKey = "severities";
+      if (fieldKey === "status") fieldKey = "statuses";
+
+      if (liveSuggestions && liveSuggestions[fieldKey]) {
+        const values = liveSuggestions[fieldKey].filter((v) =>
+          isCleanSuggestion(v) && v.toLowerCase().startsWith(trimmed)
+        );
+        if (values.length > 0) {
+          return {
+            type: "values",
+            items: values.map((v) => ({ value: `${activeField}:${v}`, label: v, description: `${activeField} value` })),
+          };
+        }
+      }
+    }
+
+    const fieldItems = FIELD_SUGGESTIONS.filter(
+      (f) => f.value.toLowerCase().includes(trimmed) || f.label.toLowerCase().includes(trimmed)
+    );
+    const timeItems = TIME_KEYWORDS.filter((t) => t.includes(trimmed))
+      .map((t) => ({ value: t, label: t, description: "Time range shortcut" }));
+    const historyItems = history
+      .filter((h) => h.toLowerCase().includes(trimmed))
+      .slice(0, 5)
+      .map((h) => ({ value: h, label: h, description: "Recent search" }));
+
+    const liveItems = [];
+    if (liveSuggestions) {
+      const liveCategories = {
+        hosts: { icon: "host", label: "Host" },
+        users: { icon: "user", label: "User" },
+        processes: { icon: "process", label: "Process" },
+        event_ids: { icon: "eventid", label: "Event" },
+        mitre_ids: { icon: "mitre", label: "MITRE" },
+        ips: { icon: "ioc", label: "IP" },
+      };
+      Object.entries(liveSuggestions).forEach(([key, items]) => {
+        const cfg = liveCategories[key];
+        if (items && items.length > 0) {
+          items.forEach((item) => {
+            if (isCleanSuggestion(item)) {
+              liveItems.push({
+                value: item,
+                label: item,
+                description: cfg ? cfg.label : key,
+                _type: "live",
+                _icon: cfg ? cfg.icon : "sparkles",
+              });
+            }
+          });
+        }
+      });
+    }
+
+    const all = [
+      ...fieldItems.map((f) => ({ ...f, _type: "field" })),
+      ...timeItems.map((t) => ({ ...t, _type: "time" })),
+      ...liveItems.slice(0, 10),
+      ...historyItems.map((h) => ({ ...h, _type: "history" })),
+    ];
+
+    return { type: "mixed", items: all.slice(0, 12) };
+  }, [queryStr, activeField, history, liveSuggestions, autocomplete.suggestions]);
+
+  // Execute search
+  const executeSearch = useCallback(async (overrideQuery) => {
+    const q = overrideQuery || queryStr;
+    const parsed = parseQuery(q);
+    const validation = validateQuery(parsed);
+
+    if (!validation.valid) {
+      setValidationErrors(validation.errors);
+      return; // Don't execute invalid queries
+    }
+
+    setSearching(true);
+    setTimeout(() => setSearching(false), 600);
+
+    // Pass structured query to backend
+    const backendQuery = queryToBackend(q);
+    onSearchSubmit?.({
+      raw: q,
+      tokens: parsed.tokens || {},
+      keywords: parsed.keywords || [],
+      hasBoolean: parsed.hasBoolean || false,
+      filters: backendQuery.filters,
+      formatted_query: backendQuery.formatted_query,
+    });
+
+    // Save to server-side history (non-blocking)
+    api.post("/search/history", { query: q })
+      .then(() => refreshHistory())
+      .catch(() => {
+        try {
+          let items = JSON.parse(localStorage.getItem("socra-search-history") || "[]");
+          items = [q, ...items.filter((x) => x !== q)].slice(0, 20);
+          localStorage.setItem("socra-search-history", JSON.stringify(items));
+        } catch {
+          // ignore
+        }
+      });
+  }, [queryStr, onSearchSubmit, refreshHistory]);
+
+  const updateQuery = useCallback((text) => {
+    setQueryStr(text);
+    onChange?.(text);
+  }, [onChange]);
+
+  const clearSearch = useCallback(() => {
+    updateQuery("");
+    setValidationErrors([]);
+    if (inputRef.current) inputRef.current.focus();
+  }, [updateQuery]);
+
+  const handleKeyDown = useCallback((e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "k") {
+      e.preventDefault();
+      if (inputRef.current) inputRef.current.focus();
+      return;
+    }
+
+    // Let autocomplete handle navigation
+    if (autocomplete.handleKeyDown(e, queryStr)) {
+      return;
+    }
+
+    switch (e.key) {
+      case "Enter":
+        e.preventDefault();
+        executeSearch();
+        break;
+      case "Escape":
+        if (queryStr) {
+          clearSearch();
+        } else {
+          setIsFocused(false);
+          setShowHelp(false);
+          if (inputRef.current) inputRef.current.blur();
+        }
+        break;
+      default:
+        break;
+    }
+  }, [queryStr, autocomplete, executeSearch, updateQuery, clearSearch]);
+
+  // Global Ctrl+K handler
+  useEffect(() => {
+    const handler = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "k") {
+        e.preventDefault();
+        if (inputRef.current) inputRef.current.focus();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
+
+  // Click outside closes dropdowns
+  useEffect(() => {
+    const handler = (e) => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) {
+        setIsFocused(false);
+        setShowHelp(false);
+      }
+      if (helpRef.current && !helpRef.current.contains(e.target)) {
+        setShowHelp(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const renderSuggestionItem = (item, index) => {
+    const isSelected = selectedSuggestion === index;
+    let icon = null;
+    let typeLabel = "";
+
+    if (item._type === "field" || item.type === "field") {
+      icon = <Sparkles size={12} className="text-cyan-400 shrink-0" />;
+      typeLabel = "FIELD";
+    } else if (item._type === "time") {
+      icon = <Clock size={12} className="text-amber-400 shrink-0" />;
+      typeLabel = "TIME";
+    } else if (item._type === "live") {
+      const catIcons = {
+        host: <CheckCircle size={12} className="text-emerald-400 shrink-0" />,
+        user: <CheckCircle size={12} className="text-blue-400 shrink-0" />,
+        process: <CheckCircle size={12} className="text-amber-400 shrink-0" />,
+        eventid: <CheckCircle size={12} className="text-cyan-400 shrink-0" />,
+        mitre: <CheckCircle size={12} className="text-violet-400 shrink-0" />,
+        ioc: <CheckCircle size={12} className="text-rose-400 shrink-0" />,
+      };
+      icon = catIcons[item._icon] || <Sparkles size={12} className="text-slate-400 shrink-0" />;
+      typeLabel = item.description || "DATA";
+    } else if (item._type === "history") {
+      icon = <History size={12} className="text-slate-400 shrink-0" />;
+      typeLabel = "HISTORY";
+    } else if (item._type === "autocomplete") {
+      icon = <Zap size={12} className="text-cyan-400 shrink-0" />;
+      typeLabel = item.type?.toUpperCase() || "FIELD";
+    } else {
+      icon = <Sparkles size={12} className="text-slate-400 shrink-0" />;
+      typeLabel = "SUGGEST";
+    }
+
+    const isHistoryItem = item._type === "history";
+
+    return (
+      <button
+        key={item.value + item.label + index}
+        type="button"
+        onMouseDown={() => {
+          updateQuery(item.value);
+          setSelectedSuggestion(0);
+          if (isHistoryItem) {
+            setTimeout(() => executeSearch(item.value), 0);
+          }
+        }}
+        className={`w-full px-3.5 py-2 text-left text-xs transition-all flex items-center gap-2.5 ${
+          isSelected
+            ? "bg-cyan-600/20 text-cyan-300 border-l-2 border-cyan-500"
+            : "text-slate-300 hover:bg-slate-800/60 border-l-2 border-transparent"
+        }`}
+      >
+        {icon && <span className="shrink-0">{icon}</span>}
+        <span className="flex-1 min-w-0 font-semibold truncate">{item.label}</span>
+        {item.description && item._type !== "live" && (
+          <span className="text-[10px] text-slate-500 truncate hidden sm:block">{item.description}</span>
+        )}
+        {typeLabel && (
+          <span className={`text-[9px] font-bold uppercase tracking-wider shrink-0 ${
+            isSelected ? "text-cyan-500" : "text-slate-600"
+          }`}>{typeLabel}</span>
+        )}
+      </button>
+    );
+  };
+
+  const showDropdown = isFocused && suggestions && suggestions.items && suggestions.items.length > 0;
+
+  // Parsed query for preview
+  const parsedQuery = useMemo(() => parseQuery(queryStr), [queryStr]);
+  const previewFilters = useMemo(() => {
+    if (!queryStr.trim()) return [];
+    const tokens = {};
+    const fieldRegex = /(\w+):(?:"([^"]*)"|\[([^\]]*)\]|(\S+))/g;
+    let match;
+    while ((match = fieldRegex.exec(queryStr)) !== null) {
+      tokens[match[1].toLowerCase()] = match[2] || match[3] || match[4];
+    }
+    return Object.entries(tokens).map(([k, v]) => ({ field: k, value: v }));
+  }, [queryStr]);
+
+  return (
+    <form
+      onSubmit={(e) => { e.preventDefault(); executeSearch(); }}
+      ref={containerRef}
+      className="w-full font-mono relative z-50"
+    >
+      {/* PRIMARY SEARCH FIELD */}
+      <div
+        className={`w-full flex items-center gap-2 h-11 rounded-lg border px-3 transition-all duration-200 ${
+          isFocused
+            ? "border-cyan-500/70 bg-slate-900 shadow-[0_0_0_3px_rgba(6,182,212,.15)]"
+            : "border-slate-700/70 bg-slate-900/70 hover:border-slate-600"
+        } ${validationErrors.length > 0 ? "border-red-500/50" : ""}`}
+      >
+        {searching || suggestionsLoading ? (
+          <Loader2 size={16} className="text-cyan-400 animate-spin shrink-0" />
+        ) : (
+          <Search size={16} className={isFocused ? "text-cyan-400 shrink-0" : "text-slate-500 shrink-0"} />
+        )}
+
+        <input
+          ref={inputRef}
+          value={queryStr}
+          onChange={(e) => {
+            updateQuery(e.target.value);
+            autocomplete.debouncedUpdate(e.target.value, e.target.selectionStart);
+          }}
+          onFocus={() => { setIsFocused(true); setSelectedSuggestion(0); }}
+          onKeyDown={handleKeyDown}
+          placeholder="Search telemetry — event_id:4625 severity:critical host:WORKSTATION01"
+          className="flex-1 min-w-0 bg-transparent outline-none text-slate-100 placeholder:text-slate-600 text-sm tracking-wide font-mono"
+          aria-label="Search telemetry"
+          aria-autocomplete="list"
+          aria-controls="search-suggestions"
+          aria-expanded={showDropdown}
+          role="combobox"
+        />
+
+        {totalResults !== null && (
+          <span className="text-[10px] font-bold text-slate-500 tabular-nums shrink-0">
+            {totalResults.toLocaleString()}
+          </span>
+        )}
+
+        {queryStr && (
+          <button
+            onClick={clearSearch}
+            title="Clear search (Esc)"
+            className="text-slate-500 hover:text-white transition shrink-0 p-0.5 rounded hover:bg-slate-800"
+          >
+            <X size={14} />
+          </button>
+        )}
+
+        {/* Query preview toggle */}
+        {queryStr && (
+          <button
+            type="button"
+            onClick={() => setShowPreview(!showPreview)}
+            title="Query preview"
+            className="text-slate-500 hover:text-cyan-400 transition shrink-0 p-0.5 rounded hover:bg-slate-800"
+          >
+            <FileJson size={14} />
+          </button>
+        )}
+
+        {/* Syntax help button */}
+        <div className="relative" ref={helpRef}>
+          <button
+            onClick={() => setShowHelp(!showHelp)}
+            title="Search syntax help"
+            className="text-slate-600 hover:text-cyan-400 transition shrink-0 p-0.5 rounded hover:bg-slate-800"
+          >
+            <HelpCircle size={14} />
+          </button>
+          {showHelp && (
+            <div className="absolute right-0 top-8 z-[999] w-80 rounded-lg border border-slate-700/80 bg-slate-900/98 backdrop-blur-2xl shadow-2xl shadow-black/50 overflow-hidden">
+              <div className="px-3 py-2 border-b border-slate-800 bg-slate-900/60">
+                <p className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">SOCRA Query Language</p>
+              </div>
+              <div className="p-3 space-y-1.5">
+                {SYNTAX_EXAMPLES.map((ex) => (
+                  <div key={ex.example} className="flex items-center justify-between gap-3">
+                    <span className="text-[10px] text-slate-500 font-semibold">{ex.label}</span>
+                    <button
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        updateQuery(ex.example);
+                        setShowHelp(false);
+                        inputRef.current?.focus();
+                      }}
+                      className="text-[11px] font-mono text-cyan-400 hover:text-cyan-300 bg-slate-800/60 px-2 py-0.5 rounded border border-slate-700/40 transition"
+                    >
+                      {ex.example}
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <div className="px-3 py-1.5 border-t border-slate-800 bg-slate-900/60 text-[9px] text-slate-600">
+                Supports AND, OR, NOT operators and quoted values
+              </div>
+            </div>
+          )}
+        </div>
+
+        <button
+          type="submit"
+          disabled={searching || validationErrors.length > 0}
+          className="flex items-center gap-1.5 px-4 h-8 rounded-md bg-cyan-600 hover:bg-cyan-500 active:bg-cyan-700 disabled:bg-cyan-600/50 transition-all text-xs font-bold text-white shrink-0 hover:shadow-lg hover:shadow-cyan-500/20"
+        >
+          {searching ? <Loader2 size={12} className="animate-spin" /> : <Search size={12} />}
+          Search
+        </button>
+      </div>
+
+      {/* Inline validation errors */}
+      {validationErrors.length > 0 && (
+        <div className="mt-1.5 flex items-center gap-2 px-3 py-1.5 rounded-md border border-red-500/20 bg-red-500/5 text-[11px] text-red-300">
+          <AlertTriangle size={12} className="shrink-0" />
+          <span>{validationErrors[0].message}</span>
+          {validationErrors[0].suggestion && (
+            <span className="text-cyan-400 ml-1">{validationErrors[0].suggestion}</span>
+          )}
+        </div>
+      )}
+
+      {/* Query preview */}
+      {showPreview && previewFilters.length > 0 && (
+        <div className="mt-1.5 px-3 py-2 rounded-md border border-slate-700/50 bg-slate-900/80 text-[11px] font-mono">
+          <div className="text-slate-500 mb-1">Parsed query:</div>
+          <div className="text-cyan-400">{queryStr}</div>
+          <div className="mt-1.5 text-slate-500">Filters:</div>
+          <div className="flex flex-wrap gap-1.5 mt-1">
+            {previewFilters.map((f, i) => (
+              <span key={i} className="px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+                {f.field} = {f.value}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* SUGGESTIONS / HISTORY DROPDOWN */}
+      {showDropdown && (
+        <div
+          id="search-suggestions"
+          className="absolute top-12 left-0 right-0 rounded-lg border border-slate-700/80 bg-slate-900/98 backdrop-blur-2xl shadow-2xl shadow-black/50 overflow-hidden z-[999]"
+          role="listbox"
+        >
+          <div className="px-3.5 py-1.5 border-b border-slate-800 text-[9px] uppercase tracking-widest text-slate-500 flex items-center gap-2 bg-slate-900/60">
+            {suggestions.type === "history" ? (
+              <><History size={10} /> Recent Searches</>
+            ) : suggestions.type === "syntax" ? (
+              <><Sparkles size={10} /> Query Fields</>
+            ) : suggestions.type === "values" ? (
+              <><Zap size={10} /> Suggested Values</>
+            ) : suggestions.type === "autocomplete" ? (
+              <><Zap size={10} /> Autocomplete</>
+            ) : (
+              <><Sparkles size={10} /> Suggestions</>
+            )}
+            {suggestionsLoading && <Loader2 size={9} className="animate-spin text-cyan-400 ml-auto" />}
+          </div>
+
+          <div className="max-h-64 overflow-y-auto dropdown-scrollbar">
+            {suggestions.items.map((item, index) => renderSuggestionItem(item, index))}
+          </div>
+
+          <div className="px-3.5 py-1 border-t border-slate-800 flex items-center justify-between text-[9px] uppercase tracking-wider text-slate-600 bg-slate-900/60">
+            <span>↑↓ Navigate · ↵ Select · Tab Complete · Ctrl+K Focus</span>
+            <div className="flex items-center gap-3">
+              {suggestions.type === "history" && history.length > 0 && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await api.delete("/search/history");
+                      setServerHistory([]);
+                      setIsFocused(false);
+                    } catch { /* non-critical */ }
+                  }}
+                  className="text-red-400 hover:text-red-300 transition"
+                >
+                  Clear history
+                </button>
+              )}
+              {suggestions.type === "syntax" && (
+                <span>Type field:value syntax or free text</span>
+              )}
+              <span>{suggestions.items.length} results</span>
+            </div>
+          </div>
+        </div>
+      )}
+    </form>
+  );
+}
+
+export default EnterpriseSearchBar;

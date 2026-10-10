@@ -8,6 +8,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { ShieldAlert } from "lucide-react";
+import { severityLegendSorter } from "../../constants/security";
 
 function SeverityChart({ logs = [], analytics = null }) {
   // 1. Strict Color Mapping by Name Key
@@ -19,8 +20,8 @@ function SeverityChart({ logs = [], analytics = null }) {
     Informational: "#3b82f6", // Infrastructure Blue
   };
 
-  // 2. FIXED TREND ORDER SEQUENCE: Critical -> High -> Informational -> Low -> Medium
-  const PREFERRED_ORDER = ["Critical", "High", "Informational", "Low", "Medium"];
+  // 2. FIXED TREND ORDER SEQUENCE: Critical -> High -> Medium -> Low -> Informational
+  const PREFERRED_ORDER = ["Critical", "High", "Medium", "Low", "Informational"];
   
   let baseCounts = { Critical: 0, High: 0, Medium: 0, Low: 0, Informational: 0 };
 
@@ -128,6 +129,7 @@ function SeverityChart({ logs = [], analytics = null }) {
               payload={customLegendPayload}
               iconType="circle" // Ensures clean circle markers render
               iconSize={8}      // Increases dot size to match the prominent trend layout dots
+              itemSorter={severityLegendSorter}
               wrapperStyle={{
                 color: "#94a3b8",
                 fontSize: "9px",

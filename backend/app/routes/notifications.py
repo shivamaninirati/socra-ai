@@ -1,17 +1,15 @@
 import logging
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from typing import Optional
 
 from app.auth.dependencies import get_current_user
 from app.storage.storage_manager import storage_manager
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(
-    prefix="/notifications",
-    tags=["Notifications"]
-)
+router = APIRouter(prefix="/notifications", tags=["Notifications"])
 
 
 class MarkReadRequest(BaseModel):
@@ -26,173 +24,195 @@ class ResolveRequest(BaseModel):
     notification_id: int
 
 
+NOTIFICATION_SEVERITIES = {"Critical", "High"}
+
+
 def _resolve_user_id(current_user: dict) -> str:
-    """Extract authenticated user ID from JWT. Never trust frontend-supplied user_id."""
+    """Extract the authenticated user's ID; never accept it from the request."""
     user_id = current_user.get("user_id") or current_user.get("id")
-    return user_id or "legacy_shared_admin"
+    if user_id is None or str(user_id).strip() == "":
+        # Retain compatibility with installations that still use the legacy admin.
+        logger.warning(
+            "[Notifications] Authenticated user has no user_id/id; using legacy_shared_admin"
+        )
+        return "legacy_shared_admin"
+    return str(user_id)
+
+
+def _normalize_severity_filter(severity: Optional[str]):
+    """Return a valid subset of Critical/High, or None for both."""
+    if not severity:
+        return None
+    requested = {item.strip().capitalize() for item in severity.split(",") if item.strip()}
+    filtered = sorted(requested.intersection(NOTIFICATION_SEVERITIES))
+    # An absent/invalid filter should not accidentally hide all valid alerts.
+    return filtered or None
 
 
 # ============================================================
-# Security Attention Center Endpoints
+# Security Attention Center endpoints
 # ============================================================
 
-@router.get("/summary", dependencies=[Depends(get_current_user)])
+
+@router.get("/summary")
 def get_notification_summary(current_user: dict = Depends(get_current_user)):
-    """Severity counts for active (non-resolved) notifications.
-
-    Returns: {critical, high, system, total_attention}
-    """
+    """Return severity counts for active, non-resolved persisted notifications."""
     user_id = _resolve_user_id(current_user)
     try:
         return storage_manager.get_notification_summary(user_id)
-    except Exception as e:
-        logger.error("[Notifications] Failed to fetch summary: %s", e, exc_info=True)
+    except Exception as exc:
+        logger.error("[Notifications] Failed to fetch summary: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to load notification summary")
 
 
-@router.patch("/acknowledge", dependencies=[Depends(get_current_user)])
-def acknowledge_notification(request: AcknowledgeRequest, current_user: dict = Depends(get_current_user)):
-    """Acknowledge a notification — analyst has reviewed it.
-
-    Different from 'read': a notification can be viewed without being
-    acknowledged. Acknowledging means the analyst has taken ownership.
-    """
+@router.patch("/acknowledge")
+def acknowledge_notification(
+    request: AcknowledgeRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Acknowledge a persisted notification."""
     user_id = _resolve_user_id(current_user)
     try:
         success = storage_manager.acknowledge_notification(user_id, request.notification_id)
         if not success:
-            raise HTTPException(status_code=500, detail="Failed to acknowledge notification")
+            raise HTTPException(status_code=404, detail="Notification not found or could not be acknowledged")
         return {"success": True}
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error("[Notifications] Failed to acknowledge: %s", e, exc_info=True)
+    except Exception as exc:
+        logger.error("[Notifications] Failed to acknowledge: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to acknowledge notification")
 
 
-@router.patch("/resolve", dependencies=[Depends(get_current_user)])
-def resolve_notification(request: ResolveRequest, current_user: dict = Depends(get_current_user)):
-    """Resolve a notification — the security issue has been handled.
-
-    Resolved notifications leave the active attention queue.
-    """
+@router.patch("/resolve")
+def resolve_notification(
+    request: ResolveRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Resolve a persisted notification."""
     user_id = _resolve_user_id(current_user)
     try:
         success = storage_manager.resolve_notification(user_id, request.notification_id)
         if not success:
-            raise HTTPException(status_code=500, detail="Failed to resolve notification")
+            raise HTTPException(status_code=404, detail="Notification not found or could not be resolved")
         return {"success": True}
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error("[Notifications] Failed to resolve: %s", e, exc_info=True)
+    except Exception as exc:
+        logger.error("[Notifications] Failed to resolve: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to resolve notification")
 
 
 # ============================================================
-# Legacy endpoints (backward-compatible)
+# Notification bell endpoints
+#
+# Use the SAME event-derived source for the list, unread count, and read
+# actions. This keeps the UI consistent with today's High/Critical events
+# already shown on the dashboard, even when no separate notification row
+# was created for an older/imported event.
 # ============================================================
 
-@router.get("/today", dependencies=[Depends(get_current_user)])
+
+@router.get("/today")
 def get_today_notifications(
     current_user: dict = Depends(get_current_user),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     severity: Optional[str] = Query(None),
 ):
-    """Get today's notifications (derived from events table).
-
-    Now filtered to Critical/High only by default.
-    """
+    """Return today's High/Critical event-derived notifications, read and unread."""
     user_id = _resolve_user_id(current_user)
-    severity_filter = None
-    if severity:
-        severity_filter = [s.strip().capitalize() for s in severity.split(",")]
-        severity_filter = [s for s in severity_filter if s in ("Critical", "High")]
-        if not severity_filter:
-            severity_filter = None
+    severity_filter = _normalize_severity_filter(severity)
 
     try:
-        # Query the notifications table directly (source of truth)
-        all_notifs = storage_manager.get_today_notifications(user_id)
+        result = storage_manager.get_derived_notifications(
+            user_id,
+            page=page,
+            page_size=page_size,
+            severity_filter=severity_filter,
+        )
+        if not isinstance(result, dict):
+            logger.error("[Notifications] Derived notification query returned an unexpected result")
+            raise HTTPException(status_code=500, detail="Invalid notification response")
 
-        # Apply severity filter
-        if severity_filter:
-            all_notifs = [n for n in all_notifs if n.get("severity") in severity_filter]
+        # Defensive filter: only High/Critical items may appear in the bell,
+        # regardless of the severity values or filters passed by the caller.
+        items = result.get("items", [])
+        if not isinstance(items, list):
+            items = []
+        eligible_items = [
+            item for item in items
+            if isinstance(item, dict)
+            and str(item.get("severity", "")).strip().capitalize() in NOTIFICATION_SEVERITIES
+            and (
+                severity_filter is None
+                or str(item.get("severity", "")).strip().capitalize() in severity_filter
+            )
+        ]
 
-        # Pagination
-        total = len(all_notifs)
-        start = (page - 1) * page_size
-        end = start + page_size
-        items = all_notifs[start:end]
-
-        return {
-            "items": items,
-            "total": total,
-            "page": page,
-            "page_size": page_size,
-            "has_more": end < total,
-        }
-    except Exception as e:
-        logger.error("[Notifications] Failed to fetch today: %s", e, exc_info=True)
+        result["items"] = eligible_items
+        result.setdefault("page", page)
+        result.setdefault("page_size", page_size)
+        result.setdefault("total", len(eligible_items))
+        result.setdefault("unread_count", storage_manager.get_derived_unread_count(user_id))
+        result.setdefault("has_more", False)
+        return result
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("[Notifications] Failed to fetch today's alerts: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to load notifications")
 
 
-@router.get("/unread-count", dependencies=[Depends(get_current_user)])
+@router.get("/unread-count")
 def get_unread_count(current_user: dict = Depends(get_current_user)):
-    """Authoritative unread count for the bell badge.
-
-    Counts unread (read=0) notifications from the notifications table.
-    Only HIGH/CRITICAL severity notifications are created, so no
-    additional severity filter needed here.
-    """
+    """Return unread High/Critical event-derived count for the bell badge."""
     user_id = _resolve_user_id(current_user)
     try:
-        count = storage_manager.get_unread_count(user_id)
-        return {"count": count}
-    except Exception as e:
-        logger.error("[Notifications] Failed to fetch unread count: %s", e, exc_info=True)
+        count = storage_manager.get_derived_unread_count(user_id)
+        return {"count": max(0, int(count or 0))}
+    except Exception as exc:
+        logger.error("[Notifications] Failed to fetch unread count: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to load unread count")
 
 
-@router.patch("/mark-read", dependencies=[Depends(get_current_user)])
-def mark_notification_read(request: MarkReadRequest, current_user: dict = Depends(get_current_user)):
-    """Mark a single notification as read (backward-compatible)."""
+@router.patch("/mark-read")
+async def mark_notification_read(
+    request: MarkReadRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Mark one event-derived notification as read for this user."""
     user_id = _resolve_user_id(current_user)
     try:
         success = storage_manager.mark_derived_read(user_id, request.notification_id)
         if not success:
-            raise HTTPException(status_code=500, detail="Failed to mark as read")
+            raise HTTPException(status_code=404, detail="Notification not found or could not be marked as read")
+
+        from app.services.live_soc_service import live_soc
+        await live_soc._broadcast_notification_update()
         return {"success": True}
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error("[Notifications] Failed to mark-read: %s", e, exc_info=True)
+    except Exception as exc:
+        logger.error("[Notifications] Failed to mark as read: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to mark as read")
 
 
-@router.patch("/mark-all-read", dependencies=[Depends(get_current_user)])
+@router.patch("/mark-all-read")
 async def mark_all_notifications_read(current_user: dict = Depends(get_current_user)):
-    """Mark all of today's HIGH/CRITICAL notifications as read for this user.
-
-    After persisting the read state, broadcasts a notification_update frame
-    to all connected WebSocket clients so other tabs update their badge.
-    """
+    """Mark today's High/Critical event-derived notifications as read."""
     user_id = _resolve_user_id(current_user)
     try:
         success = storage_manager.mark_all_derived_read(user_id)
         if not success:
             raise HTTPException(status_code=500, detail="Failed to mark all as read")
 
-        # Broadcast notification_update so all connected clients (other tabs)
-        # refresh their badge count.
         from app.services.live_soc_service import live_soc
         await live_soc._broadcast_notification_update()
-
         logger.info("[Notifications] Mark all read: user_id=%s", user_id)
         return {"success": True}
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error("[Notifications] Failed to mark-all-read: %s", e, exc_info=True)
+    except Exception as exc:
+        logger.error("[Notifications] Failed to mark all as read: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to mark all as read")

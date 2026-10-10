@@ -67,7 +67,7 @@ function StatCard({ title, value, color }) {
   };
 
   return (
-    <div className="group relative overflow-hidden bg-slate-900/20 border border-slate-800/80 rounded-xl p-3 transition-all duration-200">
+    <div className="group relative overflow-hidden bg-slate-900/20 border border-slate-800/80 rounded-xl p-4 transition-all duration-200">
       
       {/* Background Hover Flow Glow Effect */}
       <div
@@ -87,27 +87,27 @@ function StatCard({ title, value, color }) {
           {item.icon}
         </div>
 
-        <div className="flex items-center gap-1.5 text-green-400 text-[10px] font-bold tracking-wider">
+        <div className="flex items-center gap-1.5 text-green-400 text-xs font-bold tracking-wider">
           <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
           <span>LIVE</span>
         </div>
       </div>
 
       {/* Meta Metric Label Descriptive Subtitle */}
-      <p className="mt-3 text-[10px] font-bold uppercase tracking-widest text-slate-500">
+      <p className="mt-3 text-xs font-bold uppercase tracking-widest text-slate-400">
         {title}
       </p>
 
       {/* Metric Main Dynamic Counter Section */}
       <div className="flex justify-between items-end mt-1">
         <h2
-          className="text-4xl font-extrabold tracking-tight"
+          className="text-3xl sm:text-4xl font-extrabold tracking-tight truncate"
           style={{ color }}
         >
           {value}
         </h2>
 
-        <div className="flex items-center gap-1 text-emerald-500 text-[10px] font-semibold pb-1">
+        <div className="flex items-center gap-1 text-emerald-500 text-xs font-semibold pb-1">
           <TrendingUp size={12} />
           <span>Active</span>
         </div>
@@ -115,10 +115,10 @@ function StatCard({ title, value, color }) {
 
       {/* Footer Text Metadata Label Area */}
       <div className="flex justify-between items-center mt-3 pt-2 border-t border-slate-900/30">
-        <span className="text-[11px] font-medium text-slate-500 tracking-wide">
+        <span className="text-xs font-medium text-slate-400 tracking-wide">
           {item.subtitle}
         </span>
-        <span className="text-[10px] text-slate-600 font-mono">
+        <span className="text-[10px] text-slate-500 font-mono">
           Real-Time
         </span>
       </div>

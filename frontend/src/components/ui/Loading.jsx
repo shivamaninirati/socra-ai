@@ -11,42 +11,34 @@ const STATUS_MESSAGES = [
 
 const CYCLE_INTERVAL_MS = 2200;
 
-/**
- * Premium SOCRA AI enterprise loading screen.
- *
- * Shows the real SOCRA AI logo with a subtle cyber glow, radar sweep,
- * rotating dashed ring, and cycling status messages. Fades to "SYSTEM READY"
- * once `ready` prop becomes true, then calls `onComplete` after the
- * fade-out animation finishes.
- *
- * `ready` should be set by the parent when initialization is genuinely
- * complete (auth check, initial API fetch, etc.) — never an arbitrary delay.
- */
 function Loading({ ready = false, onComplete }) {
   const [msgIndex, setMsgIndex] = useState(0);
-  const [phase, setPhase] = useState("loading"); // 'loading' | 'ready' | 'done'
+  const [phase, setPhase] = useState("loading");
+
   const fadeTimerRef = useRef(null);
   const completeTimerRef = useRef(null);
 
-  // Cycle through status messages while in loading phase
   useEffect(() => {
     if (phase !== "loading") return;
+
     const id = setInterval(() => {
-      setMsgIndex((i) => (i + 1) % STATUS_MESSAGES.length);
+      setMsgIndex((index) => (index + 1) % STATUS_MESSAGES.length);
     }, CYCLE_INTERVAL_MS);
+
     return () => clearInterval(id);
   }, [phase]);
 
-  // When `ready` becomes true, transition to SYSTEM READY then call onComplete
   useEffect(() => {
     if (!ready || phase !== "loading") return;
 
     setPhase("ready");
+
     fadeTimerRef.current = setTimeout(() => {
       setPhase("done");
+
       completeTimerRef.current = setTimeout(() => {
         onComplete?.();
-      }, 700); // matches socra-fade-out animation duration
+      }, 700);
     }, 1200);
 
     return () => {
@@ -55,7 +47,13 @@ function Loading({ ready = false, onComplete }) {
     };
   }, [ready, phase, onComplete]);
 
-  // If phase is "done" and no onComplete, just render nothing
+  useEffect(() => {
+    return () => {
+      clearTimeout(fadeTimerRef.current);
+      clearTimeout(completeTimerRef.current);
+    };
+  }, []);
+
   if (phase === "done" && !onComplete) return null;
 
   const displayMessage =
@@ -65,30 +63,43 @@ function Loading({ ready = false, onComplete }) {
     <div
       className={[
         "fixed inset-0 z-[100] flex flex-col items-center justify-center",
-        "bg-slate-950",
+        "overflow-hidden bg-slate-950",
         phase === "done" ? "socra-loading-overlay" : "",
       ].join(" ")}
     >
-      {/* Ambient background radial glow */}
-      <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full bg-cyan-500/[0.03] blur-[100px]" />
+      {/* Ambient background */}
+      <div className="pointer-events-none absolute inset-0">
+        <div className="absolute left-1/2 top-1/2 h-[600px] w-[600px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-slate-500/[0.04] blur-[120px]" />
+
+        <div
+          className="absolute inset-0 opacity-[0.035]"
+          style={{
+            backgroundImage:
+              "linear-gradient(rgba(148,163,184,0.3) 1px, transparent 1px), linear-gradient(90deg, rgba(148,163,184,0.3) 1px, transparent 1px)",
+            backgroundSize: "48px 48px",
+            maskImage:
+              "radial-gradient(ellipse at center, black 0%, transparent 75%)",
+            WebkitMaskImage:
+              "radial-gradient(ellipse at center, black 0%, transparent 75%)",
+          }}
+        />
       </div>
 
-      {/* Logo container with all animation layers */}
-      <div className="relative w-[200px] h-[200px] socra-logo-enter">
-        {/* Layer 1: Outer pulsing glow */}
+      {/* Animated logo system */}
+      <div className="socra-logo-enter relative h-[200px] w-[200px]">
+        {/* Outer ambient glow */}
         <div
           className="absolute inset-[-20px] rounded-full"
           style={{
             background:
-              "radial-gradient(circle, rgba(6,182,212,0.15) 0%, transparent 70%)",
+              "radial-gradient(circle, rgba(148,163,184,0.09) 0%, transparent 70%)",
             animation: "socra-pulse-glow 3s ease-in-out infinite",
           }}
         />
 
-        {/* Layer 2: Radar sweep — conic-gradient rotating clockwise */}
+        {/* Radar sweep */}
         <div
-          className="absolute top-1/2 left-1/2 w-[180px] h-[180px] rounded-full overflow-hidden"
+          className="absolute left-1/2 top-1/2 h-[180px] w-[180px] overflow-hidden rounded-full"
           style={{
             transform: "translate(-50%, -50%)",
             animation: "socra-radar-sweep 4s linear infinite",
@@ -98,77 +109,80 @@ function Loading({ ready = false, onComplete }) {
             className="absolute inset-0"
             style={{
               background:
-                "conic-gradient(from 0deg, transparent 0deg, rgba(6,182,212,0.18) 30deg, transparent 60deg)",
+                "conic-gradient(from 0deg, transparent 0deg, rgba(148,163,184,0.12) 30deg, transparent 60deg)",
             }}
           />
         </div>
 
-        {/* Layer 3: Rotating dashed ring */}
+        {/* Outer rotating ring */}
         <svg
-          className="absolute top-1/2 left-1/2 w-[170px] h-[170px]"
+          className="absolute left-1/2 top-1/2 h-[170px] w-[170px]"
           style={{
             transform: "translate(-50%, -50%)",
             animation: "socra-ring-rotate 20s linear infinite",
           }}
           viewBox="0 0 170 170"
+          aria-hidden="true"
         >
           <circle
             cx="85"
             cy="85"
             r="80"
             fill="none"
-            stroke="rgba(6,182,212,0.12)"
+            stroke="rgba(148,163,184,0.18)"
             strokeWidth="1"
             strokeDasharray="8 12"
           />
         </svg>
 
-        {/* Layer 4: Inner thin ring (counter-rotating) */}
+        {/* Inner counter-rotating ring */}
         <svg
-          className="absolute top-1/2 left-1/2 w-[130px] h-[130px]"
+          className="absolute left-1/2 top-1/2 h-[130px] w-[130px]"
           style={{
             transform: "translate(-50%, -50%)",
             animation: "socra-ring-rotate 30s linear infinite reverse",
           }}
           viewBox="0 0 130 130"
+          aria-hidden="true"
         >
           <circle
             cx="65"
             cy="65"
             r="62"
             fill="none"
-            stroke="rgba(6,182,212,0.08)"
+            stroke="rgba(148,163,184,0.12)"
             strokeWidth="0.5"
             strokeDasharray="3 8"
           />
         </svg>
 
-        {/* Layer 5: Horizontal scan line */}
+        {/* Horizontal scan line */}
         <div
-          className="absolute top-1/2 left-1/2 w-[160px] h-[1px] -translate-x-1/2"
+          className="absolute left-1/2 top-1/2 h-px w-[160px] -translate-x-1/2"
           style={{
             background:
-              "linear-gradient(90deg, transparent, rgba(6,182,212,0.4), transparent)",
+              "linear-gradient(90deg, transparent, rgba(148,163,184,0.35), transparent)",
             animation: "socra-scan-line 3s ease-in-out infinite",
           }}
         />
 
-        {/* Layer 6: SOCRA AI logo */}
+        {/* Logo */}
         <div className="absolute inset-0 flex items-center justify-center">
           <div
-            className="w-[110px] h-[110px] rounded-full flex items-center justify-center"
+            className="flex h-[110px] w-[110px] items-center justify-center rounded-full"
             style={{
               background:
-                "radial-gradient(circle, rgba(6,182,212,0.08) 0%, transparent 70%)",
+                "radial-gradient(circle, rgba(148,163,184,0.06) 0%, transparent 70%)",
             }}
           >
             <img
               src={socraLogo}
               alt="SOCRA AI"
-              className="w-[90px] h-[90px] object-contain select-none"
               draggable={false}
+              className="h-[90px] w-[90px] select-none object-contain"
               style={{
-                filter: "drop-shadow(0 0 20px rgba(6,182,212,0.3))",
+                filter:
+                  "drop-shadow(0 0 16px rgba(100,116,139,0.2))",
                 animation: "socra-pulse-glow 3s ease-in-out infinite",
               }}
             />
@@ -176,18 +190,18 @@ function Loading({ ready = false, onComplete }) {
         </div>
       </div>
 
-      {/* Text: SOCRA AI */}
-      <h1 className="socra-text-enter mt-8 text-2xl font-bold tracking-[0.2em] text-white select-none">
+      {/* Brand title */}
+      <h1 className="socra-text-enter mt-8 select-none text-2xl font-bold tracking-[0.2em] text-white">
         SOCRA AI
       </h1>
 
-      {/* Text: Subtitle */}
-      <p className="socra-subtext-enter mt-2 text-[10px] font-semibold uppercase tracking-[0.3em] text-slate-500 select-none">
+      {/* Subtitle */}
+      <p className="socra-subtext-enter mt-2 select-none text-[10px] font-semibold uppercase tracking-[0.3em] text-slate-500">
         Security Investigation Platform
       </p>
 
-      {/* Status message with smooth crossfade */}
-      <div className="socra-status-enter mt-8 h-5 flex items-center justify-center">
+      {/* Status */}
+      <div className="socra-status-enter mt-8 flex h-5 items-center justify-center">
         <p
           key={displayMessage}
           className={[
@@ -197,19 +211,38 @@ function Loading({ ready = false, onComplete }) {
           style={{
             animation: "socra-fade-in 0.4s ease-out forwards",
           }}
+          aria-live="polite"
         >
           {phase === "ready" ? (
             <span className="flex items-center gap-2">
-              <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400" />
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
               {displayMessage}
             </span>
           ) : (
             <>
               {displayMessage}
-              <span className="inline-flex w-4 ml-0.5">
-                <span style={{ animation: "socra-dot-blink 1.4s infinite 0s" }}>.</span>
-                <span style={{ animation: "socra-dot-blink 1.4s infinite 0.2s" }}>.</span>
-                <span style={{ animation: "socra-dot-blink 1.4s infinite 0.4s" }}>.</span>
+              <span className="ml-0.5 inline-flex w-4">
+                <span
+                  style={{
+                    animation: "socra-dot-blink 1.4s infinite 0s",
+                  }}
+                >
+                  .
+                </span>
+                <span
+                  style={{
+                    animation: "socra-dot-blink 1.4s infinite 0.2s",
+                  }}
+                >
+                  .
+                </span>
+                <span
+                  style={{
+                    animation: "socra-dot-blink 1.4s infinite 0.4s",
+                  }}
+                >
+                  .
+                </span>
               </span>
             </>
           )}
@@ -218,20 +251,20 @@ function Loading({ ready = false, onComplete }) {
 
       {/* Progress bar */}
       {phase === "loading" && (
-        <div className="mt-6 w-48 h-[2px] rounded-full bg-slate-800 overflow-hidden">
+        <div className="mt-6 h-[2px] w-48 overflow-hidden rounded-full bg-slate-800">
           <div
-            className="h-full rounded-full socra-progress-bar"
+            className="socra-progress-bar h-full rounded-full"
             style={{
               background:
-                "linear-gradient(90deg, rgba(6,182,212,0.2), rgba(6,182,212,0.6), rgba(6,182,212,0.2))",
+                "linear-gradient(90deg, rgba(148,163,184,0.15), rgba(148,163,184,0.6), rgba(148,163,184,0.15))",
               backgroundSize: "200% 100%",
             }}
           />
         </div>
       )}
 
-      {/* Version tag */}
-      <p className="absolute bottom-6 text-[9px] font-medium tracking-wider text-slate-700 uppercase select-none">
+      {/* Version */}
+      <p className="absolute bottom-6 select-none text-[9px] font-medium uppercase tracking-wider text-slate-700">
         v0.1.0 — Enterprise Edition
       </p>
     </div>

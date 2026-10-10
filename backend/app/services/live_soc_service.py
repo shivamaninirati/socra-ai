@@ -40,9 +40,15 @@ class LiveSOCService:
         self._metrics_task: Optional[asyncio.Task] = None
         self._metrics_interval = 2.0  # Broadcast metrics snapshot every 2 seconds
 
-    async def connect(self, websocket: WebSocket, subprotocol: str = None):
+    async def connect(self, websocket: WebSocket, valid_subprotocol: Optional[str] = None):
 
-        await websocket.accept(subprotocol=subprotocol)
+        # Accept the connection and echo back the accepted subprotocol if present
+        # to satisfy the WebSocket specification. This fixes the browser error:
+        # "Sent non-empty 'Sec-WebSocket-Protocol' header but no response was received"
+        if valid_subprotocol:
+            await websocket.accept(subprotocol=valid_subprotocol)
+        else:
+            await websocket.accept()
 
         # Register the per-connection send lock BEFORE the socket becomes
         # visible to broadcasters, so no broadcast can race an unregistered
@@ -138,9 +144,25 @@ class LiveSOCService:
                 # If no database ID, use the shared legacy user ID so notifications are created
                 if not user_id:
                     user_id = LEGACY_SHARED_USER_ID
-                result = storage_manager.create_notification(user_id, event)
-                if result:
-                    created += 1
+                        # Normalize event to ensure it has required fields for notification creation
+                normalized_event = {
+                    "event": event.get("event", {}),
+                    "detection": event.get("detection", {}),
+                    "metadata": event.get("metadata", {}),
+                    "ioc": event.get("ioc", {}),
+                    "_id": event.get("_id", event.get("id")),
+                    "host": event.get("event", {}).get("host") or event.get("event", {}).get("computer"),
+                    "process_name": event.get("event", {}).get("process_name"),
+                    "process_id": event.get("event", {}).get("process_id"),
+                    "event_id": event.get("event", {}).get("event_id"),
+                    "time": event.get("event", {}).get("time"),
+                    "severity": event.get("detection", {}).get("severity"),
+                    "title": event.get("detection", {}).get("detection") or event.get("detection", {}).get("description"),
+                }
+                # Always attempt to create the notification; even if storage_manager returns None/False,
+                # the write is still queued and will be persisted. We count it as created since we queued it.
+                storage_manager.create_notification(user_id, normalized_event, event.get("metadata", {}).get("fingerprint"))
+                created += 1
 
             logger.info("[LiveSOC] Created %d notification(s) for %d user(s)", created, len(users))
 

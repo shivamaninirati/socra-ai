@@ -10,6 +10,7 @@ import {
   Legend
 } from "recharts";
 import { Activity } from "lucide-react";
+import { severityLegendSorter } from "../../constants/security";
 
 function AlertTrendChart({ logs = [], analytics = null }) {
   let chartData = [];
@@ -154,7 +155,15 @@ function AlertTrendChart({ logs = [], analytics = null }) {
                 height={24}
                 iconType="circle"
                 iconSize={8}
+                itemSorter={severityLegendSorter}
                 wrapperStyle={{ fontSize: '9px', fontFamily: 'monospace', textTransform: 'uppercase', fontWeight: 700, paddingBottom: '10px' }}
+                payload={[
+                  { value: 'CRITICAL', type: 'circle', color: '#ef4444' },
+                  { value: 'HIGH', type: 'circle', color: '#f97316' },
+                  { value: 'MEDIUM', type: 'circle', color: '#eab308' },
+                  { value: 'LOW', type: 'circle', color: '#22c55e' },
+                  { value: 'INFORMATIONAL', type: 'circle', color: '#3b82f6' }
+                ]}
               />
 
               {/* Explicit independent area tracks */}

@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Fingerprint, Globe, Link2, Hash, FileSearch, Database, ExternalLink, CircleAlert } from "lucide-react";
+import {
+  Fingerprint,
+  Globe,
+  FileSearch,
+  Database,
+  ExternalLink,
+  CircleAlert,
+} from "lucide-react";
+
 import PageHeader from "../components/ui/PageHeader";
 import api from "../services/api";
 
@@ -12,32 +20,56 @@ const STATUS_LABEL = {
 };
 
 const TYPE_BADGE = {
-  "IPv4 Address": "bg-cyan-500/15 border-cyan-500/25 text-cyan-300",
-  "IPv6 Address": "bg-cyan-500/15 border-cyan-500/25 text-cyan-300",
-  Domain: "bg-purple-500/15 border-purple-500/25 text-purple-300",
-  URL: "bg-blue-500/15 border-blue-500/25 text-blue-300",
-  MD5: "bg-green-500/15 border-green-500/25 text-green-300",
-  "SHA-1": "bg-green-500/15 border-green-500/25 text-green-300",
-  "SHA-256": "bg-green-500/15 border-green-500/25 text-green-300",
-  Unknown: "bg-slate-500/15 border-slate-500/25 text-slate-300",
+  "IPv4 Address": "border-slate-700 bg-slate-800/70 text-slate-300",
+  "IPv6 Address": "border-slate-700 bg-slate-800/70 text-slate-300",
+  Domain: "border-purple-500/20 bg-purple-500/[0.07] text-purple-300",
+  URL: "border-blue-500/20 bg-blue-500/[0.07] text-blue-300",
+  MD5: "border-emerald-500/20 bg-emerald-500/[0.07] text-emerald-300",
+  "SHA-1": "border-emerald-500/20 bg-emerald-500/[0.07] text-emerald-300",
+  "SHA-256": "border-emerald-500/20 bg-emerald-500/[0.07] text-emerald-300",
+  Unknown: "border-slate-700 bg-slate-800/60 text-slate-400",
 };
 
 const SEVERITY_COLOR = {
-  Critical: "text-red-400",
-  High: "text-orange-400",
-  Medium: "text-yellow-400",
-  Low: "text-green-400",
-  Informational: "text-slate-400",
+  Critical: "bg-red-400",
+  High: "bg-orange-400",
+  Medium: "bg-yellow-400",
+  Low: "bg-emerald-400",
+  Informational: "bg-slate-500",
 };
+
+const panelClass =
+  "rounded-xl border border-slate-800/80 bg-slate-950/50";
+
+const sectionTitleClass =
+  "text-sm font-semibold tracking-wide text-slate-200";
+
+function SectionHeading({ icon: Icon, title, detail }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex items-center gap-2.5">
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-800 bg-slate-900/80">
+          <Icon size={15} className="text-slate-400" />
+        </div>
+        <h3 className={sectionTitleClass}>{title}</h3>
+      </div>
+
+      {detail && (
+        <span className="text-[10px] text-slate-500">{detail}</span>
+      )}
+    </div>
+  );
+}
 
 function ProviderCard({ provider }) {
   const entry = provider.entry || {};
   const status = entry.status || "not_configured";
   const result = entry.result || {};
+
   const isError = status === "error";
   const isOk = status === "ok";
-  const isApplicable = !["error", "not_applicable"].includes(status);
-  const color = isError
+
+  const statusColor = isError
     ? "text-red-400"
     : isOk
       ? "text-emerald-400"
@@ -46,73 +78,115 @@ function ProviderCard({ provider }) {
         : "text-slate-500";
 
   const detailLines = [];
+
   if (provider.key === "virustotal") {
     detailLines.push(
       { label: "Malicious", value: result.malicious },
       { label: "Suspicious", value: result.suspicious },
       { label: "Harmless", value: result.harmless },
       { label: "Undetected", value: result.undetected },
-      { label: "Reputation", value: result.reputation },
+      { label: "Reputation", value: result.reputation }
     );
   }
+
   if (provider.key === "abuseipdb") {
     detailLines.push(
       { label: "Abuse Score", value: result.abuse_score },
       { label: "Reports", value: result.total_reports },
       { label: "Country", value: result.country },
       { label: "Usage Type", value: result.usage_type },
-      { label: "Whitelisted", value: result.is_whitelisted },
+      { label: "Whitelisted", value: result.is_whitelisted }
     );
   }
 
   return (
-    <div className="bg-slate-800/40 border border-slate-700/60 rounded-xl p-6">
-      <div className="flex items-center justify-between">
-        <p className="text-slate-400 text-sm">{provider.label}</p>
-        <span className={`text-xs font-bold uppercase tracking-wider ${color}`}>
+    <div className={`${panelClass} p-5 transition-colors hover:border-slate-700`}>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-800 bg-slate-900">
+            <Globe size={16} className="text-slate-400" />
+          </div>
+
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-slate-200">
+              {provider.label}
+            </p>
+            <p className="mt-0.5 text-[10px] text-slate-500">
+              External intelligence source
+            </p>
+          </div>
+        </div>
+
+        <span
+          className={`shrink-0 text-right text-[10px] font-semibold uppercase tracking-wider ${statusColor}`}
+        >
           {STATUS_LABEL[status] || status}
         </span>
       </div>
 
       {isOk && entry.confidence != null && (
-        <p className="mt-3 text-xs text-slate-500">
-          Confidence{" "}
-          <span className="font-mono font-bold text-slate-300">{entry.confidence}%</span>
+        <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-slate-800/70 pt-3 text-[11px] text-slate-500">
+          <span>
+            Confidence{" "}
+            <span className="font-mono font-semibold text-slate-300">
+              {entry.confidence}%
+            </span>
+          </span>
+
           {entry.lookup_time != null && (
-            <span className="ml-2">· {entry.lookup_time}s</span>
+            <span>
+              Lookup time{" "}
+              <span className="font-mono text-slate-400">
+                {entry.lookup_time}s
+              </span>
+            </span>
           )}
-        </p>
+        </div>
       )}
 
-      {isOk && entry.lookup_scope === "host_of_url" && entry.lookup_target && (
-        <p className="mt-2 text-[10px] text-slate-500">
-          Enriched host: <span className="font-mono text-slate-300">{entry.lookup_target}</span>
-          {" "}(URL host lookup)
-        </p>
-      )}
+      {isOk &&
+        entry.lookup_scope === "host_of_url" &&
+        entry.lookup_target && (
+          <p className="mt-3 break-all text-[10px] leading-5 text-slate-500">
+            Enriched host:{" "}
+            <span className="font-mono text-slate-300">
+              {entry.lookup_target}
+            </span>{" "}
+            (URL host lookup)
+          </p>
+        )}
 
       {isError && (
-        <p className="mt-3 text-xs text-red-400">{entry.error || "Provider lookup failed."}</p>
+        <div className="mt-4 rounded-lg border border-red-500/15 bg-red-500/[0.04] px-3 py-2.5">
+          <p className="text-xs leading-5 text-red-300">
+            {entry.error || "Provider lookup failed."}
+          </p>
+        </div>
       )}
 
       {status === "not_configured" && (
-        <p className="mt-3 text-xs text-slate-500">
-          No API key configured for this provider.
+        <p className="mt-4 text-xs leading-5 text-slate-500">
+          No API key is configured for this provider.
         </p>
       )}
 
       {status === "not_applicable" && (
-        <p className="mt-3 text-xs text-slate-500">
+        <p className="mt-4 text-xs leading-5 text-slate-500">
           {entry.message || "Provider does not support this indicator type."}
         </p>
       )}
 
-      {isOk && isApplicable && detailLines.length > 0 && (
-        <div className="mt-3 space-y-1.5">
+      {isOk && detailLines.length > 0 && (
+        <div className="mt-4 space-y-0 border-t border-slate-800/70 pt-2">
           {detailLines.map((line) => (
-            <div key={line.label} className="flex justify-between text-xs">
-              <span className="text-slate-500">{line.label}</span>
-              <span className="font-mono font-bold text-slate-200">{String(line.value ?? "-")}</span>
+            <div
+              key={line.label}
+              className="flex items-center justify-between gap-3 border-b border-slate-800/40 py-2 last:border-b-0"
+            >
+              <span className="text-xs text-slate-500">{line.label}</span>
+              <span className="break-all text-right font-mono text-xs font-medium text-slate-200">
+                {String(line.value ?? "-")}
+              </span>
             </div>
           ))}
         </div>
@@ -124,9 +198,14 @@ function ProviderCard({ provider }) {
 function InternalIntel({ internal }) {
   if (!internal || !internal.searched) {
     return (
-      <div className="bg-slate-800/40 border border-slate-700/60 rounded-xl p-6 text-center">
-        <Database size={22} className="text-slate-600 mx-auto mb-2" />
-        <p className="text-xs text-slate-500">
+      <div className={`${panelClass} flex flex-col items-center px-5 py-10 text-center`}>
+        <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl border border-slate-800 bg-slate-900">
+          <Database size={18} className="text-slate-500" />
+        </div>
+        <p className="text-sm font-medium text-slate-300">
+          No local intelligence search
+        </p>
+        <p className="mt-1 max-w-md text-xs leading-5 text-slate-500">
           No local SOCRA intelligence search was performed for this indicator.
         </p>
       </div>
@@ -136,93 +215,193 @@ function InternalIntel({ internal }) {
   const events = internal.events || [];
   const cases = internal.cases || [];
   const investigations = internal.investigations || [];
-  const noMatches = internal.total_sightings === 0 && cases.length === 0 && investigations.length === 0;
+
+  const noMatches =
+    internal.total_sightings === 0 &&
+    cases.length === 0 &&
+    investigations.length === 0;
+
+  const stats = [
+    {
+      label: "Total Sightings",
+      value: internal.total_sightings || 0,
+    },
+    {
+      label: "Hosts",
+      value: internal.hosts?.length || 0,
+    },
+    {
+      label: "Cases",
+      value: cases.length,
+    },
+    {
+      label: "Investigations",
+      value: investigations.length,
+    },
+  ];
 
   return (
-    <div className="bg-slate-800/40 border border-slate-700/60 rounded-xl overflow-hidden">
-      <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-700/40 bg-slate-800/60">
+    <div className={`${panelClass} overflow-hidden`}>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/80 bg-slate-900/40 px-5 py-4">
         <div className="flex items-center gap-2.5">
-          <Database size={15} className="text-cyan-400" />
-          <h3 className="text-sm font-bold text-slate-200">SOCRA Internal Intelligence</h3>
+          <Database size={15} className="text-slate-400" />
+          <h3 className="text-sm font-semibold text-slate-200">
+            SOCRA Internal Intelligence
+          </h3>
         </div>
-        <span className="text-[10px] text-slate-500">window: last {internal.window_days} days</span>
+
+        <span className="rounded-md border border-slate-800 bg-slate-950/60 px-2.5 py-1 text-[10px] text-slate-500">
+          Last {internal.window_days} days
+        </span>
       </div>
 
       <div className="p-5">
         {noMatches ? (
-          <div className="text-center py-4">
-            <CircleAlert size={20} className="text-slate-600 mx-auto mb-2" />
-            <p className="text-xs text-slate-500">
-              No local sightings of this indicator in events, cases or investigations.
+          <div className="flex flex-col items-center py-8 text-center">
+            <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-lg border border-slate-800 bg-slate-900">
+              <CircleAlert size={17} className="text-slate-500" />
+            </div>
+            <p className="text-sm text-slate-300">No local sightings found</p>
+            <p className="mt-1 max-w-md text-xs leading-5 text-slate-500">
+              No local sightings of this indicator were found in events, cases,
+              or investigations.
             </p>
           </div>
         ) : (
-          <div className="space-y-5">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <div className="p-3 bg-slate-900/40 rounded-lg border border-slate-800/40">
-                <p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Total Sightings</p>
-                <p className="text-xl font-black text-cyan-400 mt-1">{internal.total_sightings || 0}</p>
-              </div>
-              <div className="p-3 bg-slate-900/40 rounded-lg border border-slate-800/40">
-                <p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Hosts</p>
-                <p className="text-xl font-black text-cyan-400 mt-1">{internal.hosts?.length || 0}</p>
-              </div>
-              <div className="p-3 bg-slate-900/40 rounded-lg border border-slate-800/40">
-                <p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Cases</p>
-                <p className="text-xl font-black text-cyan-400 mt-1">{cases.length}</p>
-              </div>
-              <div className="p-3 bg-slate-900/40 rounded-lg border border-slate-800/40">
-                <p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Investigations</p>
-                <p className="text-xl font-black text-cyan-400 mt-1">{investigations.length}</p>
-              </div>
+          <div className="space-y-6">
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              {stats.map((stat) => (
+                <div
+                  key={stat.label}
+                  className="rounded-lg border border-slate-800/80 bg-slate-900/40 p-4"
+                >
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                    {stat.label}
+                  </p>
+                  <p className="mt-2 font-mono text-2xl font-semibold tabular-nums text-slate-100">
+                    {stat.value.toLocaleString()}
+                  </p>
+                </div>
+              ))}
             </div>
 
             {events.length > 0 && (
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">Recent Sightings</p>
-                <div className="space-y-1.5">
-                  {events.map((e) => (
-                    <div key={e.id} className="flex items-center gap-3 p-2 bg-slate-900/40 rounded-lg border border-slate-800/40">
-                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${SEVERITY_COLOR[e.severity] || "text-slate-400"}`} />
-                      <span className="text-[10px] font-mono text-slate-500 shrink-0 w-36 truncate">{e.time}</span>
-                      <span className="text-[10px] font-mono font-bold text-cyan-500/80 bg-cyan-500/10 border border-cyan-500/20 px-1.5 py-0.5 rounded shrink-0">EID {e.event_id || "-"}</span>
-                      <span className="text-[10px] font-mono text-slate-300 truncate flex-1">{e.host || "-"}</span>
-                      <span className="text-[9px] text-slate-500 truncate hidden md:inline max-w-[200px]">{e.detection || ""}</span>
-                      <span className="text-[9px] font-bold uppercase tracking-wider text-slate-500 shrink-0">{e.status || "New"}</span>
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <h4 className="text-xs font-semibold text-slate-300">
+                    Recent Sightings
+                  </h4>
+                  <span className="text-[10px] text-slate-500">
+                    {events.length} displayed
+                  </span>
+                </div>
+
+                <div className="space-y-2">
+                  {events.map((event) => (
+                    <div
+                      key={event.id}
+                      className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-slate-800/70 bg-slate-900/30 px-3 py-3"
+                    >
+                      <span
+                        className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                          SEVERITY_COLOR[event.severity] || "bg-slate-500"
+                        }`}
+                      />
+
+                      <span className="w-36 shrink-0 truncate font-mono text-[10px] text-slate-500">
+                        {event.time}
+                      </span>
+
+                      <span className="shrink-0 rounded border border-slate-700/70 bg-slate-800/60 px-2 py-1 font-mono text-[10px] text-slate-300">
+                        EID {event.event_id || "-"}
+                      </span>
+
+                      <span className="min-w-0 flex-1 truncate font-mono text-xs text-slate-300">
+                        {event.host || "-"}
+                      </span>
+
+                      <span className="hidden max-w-[200px] truncate text-[10px] text-slate-500 lg:inline">
+                        {event.detection || ""}
+                      </span>
+
+                      <span className="shrink-0 text-[9px] font-semibold uppercase tracking-wider text-slate-500">
+                        {event.status || "New"}
+                      </span>
                     </div>
                   ))}
+
                   {internal.total_sightings > events.length && (
-                    <p className="text-[10px] text-slate-600">+{internal.total_sightings - events.length} more sightings</p>
+                    <p className="px-1 pt-1 text-[10px] text-slate-500">
+                      +{(
+                        internal.total_sightings - events.length
+                      ).toLocaleString()}{" "}
+                      more sightings
+                    </p>
                   )}
                 </div>
               </div>
             )}
 
             {(cases.length > 0 || investigations.length > 0) && (
-              <div className="grid md:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 {cases.length > 0 && (
-                  <div className="p-3 bg-slate-900/40 rounded-lg border border-slate-800/40">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">Related Cases</p>
-                    <div className="space-y-1.5">
-                      {cases.map((c) => (
-                        <div key={c.case_id} className="flex items-center justify-between gap-2">
-                          <span className="text-[10px] font-mono font-bold text-cyan-400">{c.case_id}</span>
-                          <span className="text-[9px] text-slate-500 truncate">{c.title || "-"}</span>
-                          <span className="text-[9px] font-bold uppercase text-slate-400 shrink-0">{c.status}</span>
+                  <div className="rounded-lg border border-slate-800/80 bg-slate-900/30 p-4">
+                    <div className="mb-3 flex items-center justify-between gap-2">
+                      <h4 className="text-xs font-semibold text-slate-300">
+                        Related Cases
+                      </h4>
+                      <span className="text-[10px] text-slate-500">
+                        {cases.length}
+                      </span>
+                    </div>
+
+                    <div className="space-y-2">
+                      {cases.map((item) => (
+                        <div
+                          key={item.case_id}
+                          className="flex items-center gap-3 border-b border-slate-800/50 pb-2 last:border-b-0 last:pb-0"
+                        >
+                          <span className="shrink-0 font-mono text-[10px] font-semibold text-slate-300">
+                            {item.case_id}
+                          </span>
+                          <span className="min-w-0 flex-1 truncate text-[10px] text-slate-500">
+                            {item.title || "-"}
+                          </span>
+                          <span className="shrink-0 text-[9px] font-semibold uppercase text-slate-400">
+                            {item.status}
+                          </span>
                         </div>
                       ))}
                     </div>
                   </div>
                 )}
+
                 {investigations.length > 0 && (
-                  <div className="p-3 bg-slate-900/40 rounded-lg border border-slate-800/40">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">Related Investigations</p>
-                    <div className="space-y-1.5">
-                      {investigations.map((inv) => (
-                        <div key={inv.id} className="flex items-center justify-between gap-2">
-                          <span className="text-[10px] font-mono text-cyan-400 truncate">{inv.id}</span>
-                          <span className="text-[9px] text-slate-500">{inv.host || "-"}</span>
-                          <span className="text-[9px] font-bold uppercase text-slate-400 shrink-0">{inv.severity || ""}</span>
+                  <div className="rounded-lg border border-slate-800/80 bg-slate-900/30 p-4">
+                    <div className="mb-3 flex items-center justify-between gap-2">
+                      <h4 className="text-xs font-semibold text-slate-300">
+                        Related Investigations
+                      </h4>
+                      <span className="text-[10px] text-slate-500">
+                        {investigations.length}
+                      </span>
+                    </div>
+
+                    <div className="space-y-2">
+                      {investigations.map((item) => (
+                        <div
+                          key={item.id}
+                          className="flex items-center gap-3 border-b border-slate-800/50 pb-2 last:border-b-0 last:pb-0"
+                        >
+                          <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-slate-300">
+                            {item.id}
+                          </span>
+                          <span className="max-w-[100px] truncate text-[10px] text-slate-500">
+                            {item.host || "-"}
+                          </span>
+                          <span className="shrink-0 text-[9px] font-semibold uppercase text-slate-400">
+                            {item.severity || ""}
+                          </span>
                         </div>
                       ))}
                     </div>
@@ -231,7 +410,11 @@ function InternalIntel({ internal }) {
               </div>
             )}
 
-            <p className="text-[10px] text-slate-600 leading-4">{internal.note}</p>
+            {internal.note && (
+              <p className="border-t border-slate-800/70 pt-4 text-[10px] leading-5 text-slate-500">
+                {internal.note}
+              </p>
+            )}
           </div>
         )}
       </div>
@@ -242,55 +425,90 @@ function InternalIntel({ internal }) {
 function ThreatIntelligence() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [indicator, setIndicator] = useState(searchParams.get("indicator") || "");
+
+  const [indicator, setIndicator] = useState(
+    searchParams.get("indicator") || ""
+  );
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
 
+  const lastAnalyzedRef = useRef("");
+  const requestIdRef = useRef(0);
+
   const analyze = async (valueOverride) => {
     const value = (valueOverride ?? indicator).trim();
-    if (!value) return;
+
+    if (!value || loading) return;
+
+    const requestId = ++requestIdRef.current;
+
     setLoading(true);
     setError("");
     setResult(null);
+
     try {
-      const response = await api.post("/threat/intelligence", { indicator: value });
+      const response = await api.post("/threat/intelligence", {
+        indicator: value,
+      });
+
+      if (requestId !== requestIdRef.current) return;
+
       if (response.data.success) {
         setResult(response.data.data);
-        // Keep the URL shareable so deep links from investigations work.
+        lastAnalyzedRef.current = value;
         setSearchParams({ indicator: value }, { replace: true });
       } else {
         setError(response.data.error || "Lookup failed.");
       }
     } catch {
-      setError("Threat intelligence backend is unavailable.");
+      if (requestId === requestIdRef.current) {
+        setError("Threat intelligence backend is unavailable.");
+      }
+    } finally {
+      if (requestId === requestIdRef.current) {
+        setLoading(false);
+      }
     }
-    setLoading(false);
   };
 
-  // Deep-link support: /threat-intel?indicator=... (used by the Investigation
-  // workspace IOC "Lookup" buttons) auto-fills and runs the analysis.
-  // Keyed on searchParams (not just mount) so a deep link still triggers when
-  // the user is ALREADY on this page - e.g. opening a second IOC link without
-  // leaving the route. lastAnalyzedRef prevents re-running the same indicator.
-  const lastAnalyzedRef = useRef("");
+  // Support direct links from investigation IOC lookups.
   useEffect(() => {
-    const initial = searchParams.get("indicator");
-    if (initial && initial !== lastAnalyzedRef.current) {
-      lastAnalyzedRef.current = initial;
-      setIndicator(initial);
-      analyze(initial);
+    const linkedIndicator = searchParams.get("indicator");
+
+    if (
+      linkedIndicator &&
+      linkedIndicator !== lastAnalyzedRef.current
+    ) {
+      setIndicator(linkedIndicator);
+      analyze(linkedIndicator);
     }
+
+    // analyze is intentionally omitted: this effect reacts to URL changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
   const valid = result?.valid !== false;
+
   const providers = [
-    { key: "virustotal", label: "VirusTotal", entry: result?.providers?.virustotal },
-    { key: "abuseipdb", label: "AbuseIPDB", entry: result?.providers?.abuseipdb },
+    {
+      key: "virustotal",
+      label: "VirusTotal",
+      entry: result?.providers?.virustotal,
+    },
+    {
+      key: "abuseipdb",
+      label: "AbuseIPDB",
+      entry: result?.providers?.abuseipdb,
+    },
   ];
+
   const allProvidersUnconfigured =
-    result && providers.every((p) => !p.entry || p.entry.status === "not_configured");
+    result &&
+    providers.every(
+      (provider) =>
+        !provider.entry || provider.entry.status === "not_configured"
+    );
 
   return (
     <div className="space-y-8">
@@ -299,106 +517,226 @@ function ThreatIntelligence() {
         subtitle="Enrich IPs, domains, URLs and hashes with configured providers and local SOCRA sightings."
       />
 
-      {error && (
-        <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-xs text-red-300">
-          {error}
-        </div>
-      )}
+      <section className={`${panelClass} p-5 sm:p-6`}>
+        <div className="mb-5 flex items-start gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-800 bg-slate-900">
+            <Fingerprint size={17} className="text-slate-400" />
+          </div>
 
-      <div className="bg-slate-800/40 rounded-xl border border-slate-700/60 p-6">
-        <div className="flex gap-4">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-200">
+              Indicator Analysis
+            </h2>
+            <p className="mt-1 text-xs leading-5 text-slate-500">
+              Investigate an IP address, domain, URL, or file hash using
+              configured intelligence sources.
+            </p>
+          </div>
+        </div>
+
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            analyze();
+          }}
+          className="flex flex-col gap-3 sm:flex-row"
+        >
           <input
             value={indicator}
-            onChange={(e) => setIndicator(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && analyze()}
-            placeholder="Enter IP, Domain, URL or Hash"
-            className="flex-1 bg-slate-900/50 border border-slate-800 rounded-lg px-4 py-3 text-sm text-slate-200 placeholder:text-slate-600 outline-none focus:border-cyan-500/60"
+            onChange={(event) => setIndicator(event.target.value)}
+            placeholder="Enter IP, domain, URL or hash"
+            aria-label="Indicator to analyze"
+            autoComplete="off"
+            spellCheck={false}
+            className="h-11 min-w-0 flex-1 rounded-lg border border-slate-800 bg-slate-900/70 px-4 text-sm text-slate-200 outline-none transition-colors placeholder:text-slate-600 focus:border-slate-600 focus:ring-1 focus:ring-slate-700/40"
           />
+
           <button
-            onClick={() => analyze()}
-            className="bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold px-6 py-2.5 rounded-lg transition-all duration-150"
+            type="submit"
+            disabled={loading || !indicator.trim()}
+            className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-lg border border-slate-700 bg-slate-800 px-6 text-xs font-semibold text-slate-100 transition-colors hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            Analyze
+            {loading ? (
+              <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-400 border-t-transparent" />
+            ) : (
+              <Globe size={14} />
+            )}
+            {loading ? "Analyzing..." : "Analyze Indicator"}
           </button>
-        </div>
-      </div>
+        </form>
+
+        {error && (
+          <div
+            role="alert"
+            className="mt-4 flex items-start gap-2.5 rounded-lg border border-red-500/20 bg-red-500/[0.05] px-3.5 py-3"
+          >
+            <CircleAlert size={15} className="mt-0.5 shrink-0 text-red-400" />
+            <p className="text-xs leading-5 text-red-300">{error}</p>
+            <button
+              onClick={() => setError("")}
+              className="ml-auto shrink-0 text-[10px] font-semibold text-slate-500 transition hover:text-slate-300"
+              type="button"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+      </section>
 
       {loading && (
-        <div className="bg-slate-800/40 rounded-xl border border-slate-700/60 p-10 text-center text-slate-400">
-          Analyzing...
+        <div className={`${panelClass} flex flex-col items-center px-5 py-14 text-center`}>
+          <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-slate-800 bg-slate-900">
+            <span className="h-5 w-5 animate-spin rounded-full border-2 border-slate-700 border-t-slate-300" />
+          </div>
+          <p className="mt-4 text-sm font-medium text-slate-300">
+            Analyzing indicator
+          </p>
+          <p className="mt-1 text-xs text-slate-500">
+            Checking available intelligence sources and local context...
+          </p>
         </div>
       )}
 
       {result && !loading && (
-        <div className="space-y-6">
-          <div className="flex items-center justify-between gap-3 bg-slate-800/40 border border-slate-700/60 rounded-xl px-5 py-4">
-            <div className="min-w-0">
-              <p className="text-slate-500 text-xs mb-1">Indicator</p>
-              <p className="text-white text-lg font-semibold break-all">{result.indicator}</p>
+        <div className="space-y-7">
+          {/* Indicator overview */}
+          <section className={`${panelClass} p-5 sm:p-6`}>
+            <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+              <div className="min-w-0">
+                <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                  Analyzed Indicator
+                </p>
+                <p className="break-all font-mono text-lg font-semibold text-slate-100 sm:text-xl">
+                  {result.indicator}
+                </p>
+              </div>
+
+              <div className="flex shrink-0 flex-wrap items-center gap-2 sm:flex-col sm:items-end">
+                <span
+                  className={`inline-flex items-center rounded-md border px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wider ${
+                    TYPE_BADGE[result.type] || TYPE_BADGE.Unknown
+                  }`}
+                >
+                  {result.type || "Unknown"}
+                </span>
+
+                <span
+                  className={`text-[10px] ${
+                    result.valid
+                      ? "text-emerald-400"
+                      : "text-amber-400"
+                  }`}
+                >
+                  {result.valid
+                    ? "Validated indicator"
+                    : "Not a recognized IOC"}
+                </span>
+              </div>
             </div>
-            <div className="flex flex-col items-end gap-2 shrink-0">
-              <span className={`inline-flex items-center px-2.5 py-1 rounded border text-[10px] font-bold uppercase tracking-wider ${TYPE_BADGE[result.type] || TYPE_BADGE.Unknown}`}>
-                {result.type}
-              </span>
-              <span className="text-[10px] text-slate-500">
-                {result.valid ? "Validated indicator" : "Not a recognized IOC"}
-              </span>
-            </div>
-          </div>
+          </section>
 
           {!valid && (
-            <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-xs text-amber-300 leading-5">
-              {result.detail || "This value is not a valid IP address, domain, URL or hash."}
+            <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.04] px-4 py-3.5">
+              <div className="flex items-start gap-2.5">
+                <CircleAlert
+                  size={15}
+                  className="mt-0.5 shrink-0 text-amber-400"
+                />
+                <p className="text-xs leading-5 text-amber-300">
+                  {result.detail ||
+                    "This value is not a valid IP address, domain, URL or hash."}
+                </p>
+              </div>
             </div>
           )}
 
-          {/* External Threat Intelligence */}
-          <div className="space-y-3">
-            <div className="flex items-center gap-2">
-              <Globe size={15} className="text-cyan-400" />
-              <h3 className="text-sm font-bold text-slate-200 tracking-wide">External Threat Intelligence</h3>
-            </div>
+          {/* External intelligence */}
+          <section className="space-y-4">
+            <SectionHeading
+              icon={Globe}
+              title="External Threat Intelligence"
+              detail="Third-party provider enrichment"
+            />
+
             {allProvidersUnconfigured && (
-              <div className="rounded-xl border border-slate-700/50 bg-slate-900/30 px-4 py-3 text-xs text-slate-400 leading-5">
-                No external intelligence provider is configured. Add{" "}
-                <code className="text-cyan-400">VT_API_KEY</code> and/or{" "}
-                <code className="text-cyan-400">ABUSEIPDB_API_KEY</code> to the backend
-                environment to enable real provider enrichment. No results are fabricated.
+              <div className="rounded-xl border border-slate-800 bg-slate-900/40 px-4 py-4">
+                <div className="flex items-start gap-3">
+                  <CircleAlert
+                    size={16}
+                    className="mt-0.5 shrink-0 text-slate-400"
+                  />
+                  <div>
+                    <p className="text-xs font-medium text-slate-300">
+                      No external providers configured
+                    </p>
+                    <p className="mt-1 text-xs leading-5 text-slate-500">
+                      Add{" "}
+                      <code className="rounded bg-slate-800 px-1.5 py-0.5 text-slate-300">
+                        VT_API_KEY
+                      </code>{" "}
+                      and/or{" "}
+                      <code className="rounded bg-slate-800 px-1.5 py-0.5 text-slate-300">
+                        ABUSEIPDB_API_KEY
+                      </code>{" "}
+                      to the backend environment to enable provider enrichment.
+                      SOCRA does not fabricate missing results.
+                    </p>
+                  </div>
+                </div>
               </div>
             )}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
               {providers.map((provider) => (
                 <ProviderCard key={provider.key} provider={provider} />
               ))}
             </div>
-          </div>
+          </section>
 
-          {/* SOCRA Internal Intelligence */}
-          <div className="space-y-3">
-            <div className="flex items-center gap-2">
-              <Fingerprint size={15} className="text-emerald-400" />
-              <h3 className="text-sm font-bold text-slate-200 tracking-wide">Local Context</h3>
-            </div>
+          {/* Local intelligence */}
+          <section className="space-y-4">
+            <SectionHeading
+              icon={Fingerprint}
+              title="Local Context"
+              detail="SOCRA telemetry, cases and investigations"
+            />
+
             <InternalIntel internal={result.internal} />
-          </div>
+          </section>
 
-          {/* Supporting navigation for a real SOC workflow */}
-          <div className="flex flex-wrap gap-2">
-            <button
-              onClick={() => navigate("/alerts")}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-800/60 border border-slate-700/60 text-xs font-bold text-slate-300 rounded-lg hover:bg-slate-700/60 transition-all"
-            >
-              <FileSearch size={12} /> Browse Alerts
-            </button>
-            {result?.internal?.cases?.length > 0 && (
-              <button
-                onClick={() => navigate("/cases")}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-800/60 border border-slate-700/60 text-xs font-bold text-slate-300 rounded-lg hover:bg-slate-700/60 transition-all"
-              >
-                <ExternalLink size={12} /> Open Case Management
-              </button>
-            )}
-          </div>
+          {/* SOC workflow navigation */}
+          <section className={`${panelClass} p-4`}>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold text-slate-300">
+                  Continue investigation
+                </p>
+                <p className="mt-1 text-[11px] text-slate-500">
+                  Explore related security events and case records.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => navigate("/alerts")}
+                  className="inline-flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-xs font-medium text-slate-300 transition hover:border-slate-700 hover:bg-slate-800"
+                >
+                  <FileSearch size={13} />
+                  Browse Alerts
+                </button>
+
+                {result.internal?.cases?.length > 0 && (
+                  <button
+                    onClick={() => navigate("/cases")}
+                    className="inline-flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-xs font-medium text-slate-300 transition hover:border-slate-700 hover:bg-slate-800"
+                  >
+                    <ExternalLink size={13} />
+                    Case Management
+                  </button>
+                )}
+              </div>
+            </div>
+          </section>
         </div>
       )}
     </div>

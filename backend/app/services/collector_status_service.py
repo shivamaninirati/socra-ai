@@ -31,6 +31,9 @@ Metric definitions (kept stable across all surfaces):
   start.
 * ``last_error``            - the last collection error, if any (errors are
   visible, never silent).
+* ``source_status``         - per-source availability, keyed by registry
+  name ("windows" always; optional "sysmon" only after a successful probe),
+  with last_error / last_success / per-channel read errors.
 """
 
 from app.collector.single_instance import (
@@ -79,6 +82,7 @@ def get_collector_runtime_status() -> dict:
             "started_at": data.get("started_at"),
             "last_collection_time": data.get("last_collection_time"),
             "last_error": data.get("last_error"),
+            "source_status": data.get("source_status") or {},
             "channels": data.get("channels") or [],
         }
 
@@ -114,6 +118,7 @@ def get_collector_runtime_status() -> dict:
             "started_at": getattr(collector, "started_at", None),
             "last_collection_time": getattr(collector, "last_collection_time", None),
             "last_error": getattr(collector, "last_error", None),
+            "source_status": stats.get("source_status") or {},
             "channels": stats.get("channels", []),
         }
 
@@ -138,6 +143,7 @@ def get_collector_runtime_status() -> dict:
             "started_at": data.get("started_at"),
             "last_collection_time": data.get("last_collection_time"),
             "last_error": data.get("last_error"),
+            "source_status": data.get("source_status") or {},
             "channels": data.get("channels") or [],
         }
 
@@ -159,5 +165,6 @@ def get_collector_runtime_status() -> dict:
         "started_at": None,
         "last_collection_time": None,
         "last_error": None,
+        "source_status": {},
         "channels": [],
     }

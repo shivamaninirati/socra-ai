@@ -258,46 +258,48 @@ def get_hunt_filters():
     but scoped to the hunt workspace.
     """
     from app.storage.sqlite_storage import sqlite_storage
+    import sqlite3
 
     try:
-        conn = sqlite_storage._get_conn()
-        cursor = conn.cursor()
+        # Use the same connection pattern as all other storage methods
+        with sqlite3.connect(sqlite_storage.db_path, timeout=sqlite_storage.sqlite_timeout) as conn:
+            cursor = conn.cursor()
 
-        def _distinct(column, table="events", limit=200):
-            try:
-                cursor.execute(
-                    f"SELECT {column}, COUNT(*) as cnt FROM {table} "
-                    f"WHERE {column} IS NOT NULL AND {column} != '' "
-                    f"GROUP BY {column} ORDER BY cnt DESC LIMIT ?",
-                    (limit,),
-                )
-                return [{"value": row[0], "count": row[1]} for row in cursor.fetchall()]
-            except Exception:
-                return []
+            def _distinct(column, table="events", limit=200):
+                try:
+                    cursor.execute(
+                        f"SELECT {column}, COUNT(*) as cnt FROM {table} "
+                        f"WHERE {column} IS NOT NULL AND {column} != '' "
+                        f"GROUP BY {column} ORDER BY cnt DESC LIMIT ?",
+                        (limit,),
+                    )
+                    return [{"value": row[0], "count": row[1]} for row in cursor.fetchall()]
+                except Exception:
+                    return []
 
-        hosts = _distinct("host")
-        users = _distinct("user")
-        processes = _distinct("process_name")
-        event_ids = _distinct("event_id")
-        mitres = _distinct("mitre")
-        severities = _distinct("severity")
-        pids = _distinct("process_id")
+            hosts = _distinct("host")
+            users = _distinct("user")
+            processes = _distinct("process_name")
+            event_ids = _distinct("event_id")
+            mitres = _distinct("mitre")
+            severities = _distinct("severity")
+            pids = _distinct("process_id")
 
-        return {
-            "hosts": hosts,
-            "users": users,
-            "processes": processes,
-            "event_ids": event_ids,
-            "mitres": mitres,
-            "severities": severities if severities else [
-                {"value": "Critical", "count": 0},
-                {"value": "High", "count": 0},
-                {"value": "Medium", "count": 0},
-                {"value": "Low", "count": 0},
-                {"value": "Informational", "count": 0},
-            ],
-            "pids": pids,
-        }
+            return {
+                "hosts": hosts,
+                "users": users,
+                "processes": processes,
+                "event_ids": event_ids,
+                "mitres": mitres,
+                "severities": severities if severities else [
+                    {"value": "Critical", "count": 0},
+                    {"value": "High", "count": 0},
+                    {"value": "Medium", "count": 0},
+                    {"value": "Low", "count": 0},
+                    {"value": "Informational", "count": 0},
+                ],
+                "pids": pids,
+            }
     except Exception as e:
         logger.error("Failed to load hunt filters: %s", e, exc_info=True)
         return {

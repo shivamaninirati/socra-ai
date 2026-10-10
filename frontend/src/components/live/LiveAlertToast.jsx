@@ -1,27 +1,49 @@
-import { useEffect, useState, useCallback } from "react";
-import { ShieldAlert, X } from "lucide-react";
+import { useEffect, useState, useCallback, useRef } from "react";
+import { ShieldAlert, X, ExternalLink } from "lucide-react";
 import { useLiveSOC } from "../../context/LiveSOCContext";
+import { useNavigate } from "react-router-dom";
 
 const MAX_VISIBLE_TOASTS = 3;
 const TOAST_DURATION_MS = 6000;
 const STACK_WINDOW_MS = 1500;
 
 function LiveAlertToast() {
-  const { latestEvent } = useLiveSOC();
+  const { latestEvent, notificationUpdateTick } = useLiveSOC();
+  const navigate = useNavigate();
+  // Track which event fingerprints have been shown as toasts to prevent duplicates
+  const shownFingerprintsRef = useRef(new Set());
 
   // Toast stack: each entry is { event, id, timestamp }
   const [toasts, setToasts] = useState([]);
   const pendingCountRef = { current: 0 };
 
   // Process incoming alert events into compact toasts
+  // This runs when latestEvent changes OR when notificationUpdateTick bumps
+  // (which happens when backend creates new notifications)
   useEffect(() => {
     if (!latestEvent) return;
 
     const severity = (latestEvent.detection?.severity || "").toLowerCase();
     if (severity !== "high" && severity !== "critical") return;
 
+    // Deduplicate using fingerprint - don't show toast for same alert twice
+    const fingerprint = latestEvent.metadata?.fingerprint;
+    if (fingerprint && shownFingerprintsRef.current.has(fingerprint)) {
+      return; // Already showed toast for this alert
+    }
+
     const toastId = Date.now() + Math.random();
     const newEntry = { event: latestEvent, id: toastId, timestamp: Date.now() };
+
+    // Mark fingerprint as shown
+    if (fingerprint) {
+      shownFingerprintsRef.current.add(fingerprint);
+      // Keep set bounded
+      if (shownFingerprintshRef.current.size > 10000) {
+        const old = shownFingerprintshRef.current.values().next().value;
+        if (old) shownFingerprintshRef.current.delete(old);
+      }
+    }
 
     setToasts((prev) => {
       // Group rapid alerts: if the last toast is within STACK_WINDOW_MS,
@@ -47,11 +69,21 @@ function LiveAlertToast() {
     }, TOAST_DURATION_MS);
 
     return () => clearTimeout(timer);
-  }, [latestEvent]);
+  }, [latestEvent, notificationUpdateTick]);
 
   const dismissToast = useCallback((id) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
+
+  if (toasts.length === 0) return null;
+
+  const handleInvestigate = useCallback((event) => {
+    if (!event) return;
+    const alertId = event?._id || event?.event?.event_id;
+    if (alertId) {
+      navigate("/alerts", { state: { highlightAlertId: alertId } });
+    }
+  }, [navigate]);
 
   if (toasts.length === 0) return null;
 
@@ -63,17 +95,19 @@ function LiveAlertToast() {
           event={toast.event}
           pendingCount={toast.pendingCount || 0}
           onDismiss={() => dismissToast(toast.id)}
+          onInvestigate={() => handleInvestigate(toast.event)}
         />
       ))}
     </div>
   );
 }
 
-function CompactToast({ event, pendingCount, onDismiss }) {
+function CompactToast({ event, pendingCount, onDismiss, onInvestigate }) {
   const host = event?.event?.host || event?.event?.computer || "Unknown";
   const process = event?.event?.process_name || "";
   const severity = event?.detection?.severity || "Unknown";
   const eventId = event?.event?.event_id || "";
+  const alertId = event?._id || eventId;
   const mitre = event?.detection?.mitre;
   const mitreLabel =
     typeof mitre === "object"
@@ -115,9 +149,20 @@ function CompactToast({ event, pendingCount, onDismiss }) {
               : "New Security Alert"}
           </span>
         </div>
-        <button onClick={onDismiss} className="p-0.5 text-slate-400 hover:text-white">
-          <X size={13} />
-        </button>
+        <div className="flex items-center gap-1">
+          {alertId && (
+            <button 
+              onClick={(e) => { e.stopPropagation(); onInvestigate?.(); }}
+              className="p-0.5 text-cyan-400 hover:text-cyan-300 transition-colors"
+              title="View alert"
+            >
+              <ExternalLink size={12} />
+            </button>
+          )}
+          <button onClick={onDismiss} className="p-0.5 text-slate-400 hover:text-white">
+            <X size={13} />
+          </button>
+        </div>
       </div>
 
       {/* Content */}

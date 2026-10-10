@@ -1,3 +1,5 @@
+import asyncio
+
 from app.ai.ai_engine import AIEngine
 from app.storage.storage_manager import storage_manager
 
@@ -8,13 +10,15 @@ class ChatService:
 
         self.ai = AIEngine()
 
-    def build_context(self):
+    def build_context(self, max_events=5):
+        """
+        Build a concise context from recent live events.
 
-        events = storage_manager.get_events(
-            source="live"
-        )
-
-        latest = events[:10]
+        Args:
+            max_events: Maximum number of events to include (default 5 for faster prompts)
+        """
+        events = storage_manager.get_events(source="live")
+        latest = events[:max_events]
 
         context = []
 
@@ -22,8 +26,6 @@ class ChatService:
 
             ev = event.get("event", {})
             det = event.get("detection", {})
-            # A detection may map to multiple MITRE techniques: build_mitre_block
-            # returns a list of blocks then, so never assume a dict here.
             mitre = det.get("mitre", {})
             if isinstance(mitre, list):
                 mitre_label = "; ".join(
@@ -39,16 +41,9 @@ class ChatService:
                 )
 
             context.append(
-
-                f"""
-Host: {ev.get('host')}
-Time: {ev.get('time')}
-Event ID: {ev.get('event_id')}
-Process: {ev.get('process_name')}
-Severity: {det.get('severity')}
-Detection: {det.get('detection')}
-MITRE: {mitre_label}
-"""
+                f"Host: {ev.get('host')} | Time: {ev.get('time')} | Event: {ev.get('event_id')} | "
+                f"Process: {ev.get('process_name')} | Severity: {det.get('severity')} | "
+                f"Detection: {det.get('detection')} | MITRE: {mitre_label}"
             )
 
         return "\n".join(context)
@@ -87,7 +82,7 @@ MITRE: {mitre_label}
                 from the current conversation. When provided, the AI will
                 have full context of the ongoing discussion.
         """
-        environment = self.build_context()
+        environment = self.build_context(max_events=5)
 
         # Build the system message with SOC environment context
         system_content = (
@@ -101,13 +96,11 @@ MITRE: {mitre_label}
         # If we have conversation history, use multi-turn chat
         if conversation_history:
             messages = [{"role": "system", "content": system_content}]
-            # Add previous conversation turns (skip any system messages from history)
             for msg in conversation_history:
                 role = msg.get("role", "user")
                 content = msg.get("content", "")
                 if role in ("user", "assistant") and content:
                     messages.append({"role": role, "content": content})
-            # Add the current question as the final user message
             messages.append({"role": "user", "content": question})
             return self.ai.ollama.chat_with_history(messages)
 
@@ -125,8 +118,62 @@ MITRE: {mitre_label}
             f"=========================\n"
             f"RESPONSE FORMAT\n"
             f"=========================\n\n"
-            f"Summary\n\nTechnical Analysis\n\nMITRE ATT\u2026\n\n"
+            f"Summary\n\nTechnical Analysis\n\nMITRE ATT…\n\n"
             f"Risk Assessment\n\nRecommended Investigation\n\n"
             f"Recommended Response\n\nConclusion"
         )
         return self.ai.ollama.investigate(prompt)
+
+    async def ask_stream(self, question, conversation_history=None):
+        """Stream a response from Ollama for faster perceived latency.
+
+        Args:
+            question: the current user question.
+            conversation_history: optional list of previous messages.
+
+        Yields:
+            str: partial text chunks as they arrive.
+        """
+        environment = self.build_context(max_events=5)
+
+        system_content = (
+            f"{self.SYSTEM_PROMPT}\n\n"
+            f"=========================\n"
+            f"LIVE SOC ENVIRONMENT\n"
+            f"=========================\n\n"
+            f"{environment}"
+        )
+
+        if conversation_history:
+            messages = [{"role": "system", "content": system_content}]
+            for msg in conversation_history:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                if role in ("user", "assistant") and content:
+                    messages.append({"role": role, "content": content})
+            messages.append({"role": "user", "content": question})
+            async for chunk in self.ai.ollama.chat_with_history_stream(messages):
+                yield chunk
+            return
+
+        # No history — single-turn prompt
+        prompt = (
+            f"{self.SYSTEM_PROMPT}\n\n"
+            f"=========================\n"
+            f"LIVE SOC ENVIRONMENT\n"
+            f"=========================\n\n"
+            f"{environment}\n\n"
+            f"=========================\n"
+            f"QUESTION\n"
+            f"=========================\n\n"
+            f"{question}\n\n"
+            f"=========================\n"
+            f"RESPONSE FORMAT\n"
+            f"=========================\n\n"
+            f"Summary\n\nTechnical Analysis\n\nMITRE ATT…\n\n"
+            f"Risk Assessment\n\nRecommended Investigation\n\n"
+            f"Recommended Response\n\nConclusion"
+        )
+        # For single-turn without history, use non-streaming for simplicity
+        result = self.ai.ollama.investigate(prompt)
+        yield result

@@ -38,6 +38,7 @@ Collect Windows telemetry, detect threats, investigate alerts, and let AI do the
 - [🗄️ Database](#️-database)
 - [🖥️ Windows Telemetry](#️-windows-telemetry)
 - [🤖 AI / Ollama Setup](#-ai--ollama-setup)
+- [🔌 Splunk (Optional)](#-splunk-optional)
 - [▶️ Running the Application](#️-running-the-application)
 - [🛠️ Development Usage](#️-development-usage)
 - [⚠️ Known Limitations](#️-known-limitations)
@@ -49,7 +50,7 @@ Collect Windows telemetry, detect threats, investigate alerts, and let AI do the
 
 | | |
 |---|---|
-| 📡 **Collects** | Windows Event Logs in real time (Security, Sysmon, PowerShell, Task Scheduler) |
+| 📡 **Collects** | Windows Event Logs in real time (Security, System, Application, and optional Sysmon) |
 | 🔎 **Detects** | Suspicious activity using 100+ event rules and process intelligence |
 | 🗂️ **Classifies** | Events by severity, mapped to MITRE ATT&CK techniques |
 | 🕵️ **Investigates** | Alerts via an enterprise workspace — related events, process tree, IOCs, analyst notes |
@@ -81,7 +82,7 @@ Collect Windows telemetry, detect threats, investigate alerts, and let AI do the
                        │
 ┌──────────────────────┴──────────────────────────────────┐
 │         Windows Event Log Collector (Python)              │
-│  Security │ Sysmon │ PowerShell │ Task Scheduler          │
+│  Security │ System │ Application │ Sysmon (optional)     │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -168,14 +169,61 @@ SOCRA AI uses **SQLite with WAL** (Write-Ahead Logging) for concurrent read/writ
 
 ## 🖥️ Windows Telemetry
 
-SOCRA AI collects from four Windows Event Log channels:
+The native collector actively reads these Windows Event Log channels:
 
-| Channel | Provider | Event Types |
+| Channel | Collected | Notes |
 |---|---|---|
-| 🔐 Security | Microsoft-Windows-Security-Auditing | Authentication (4624/4625), Privilege (4672), Account Mgmt |
-| 🧬 Sysmon/Operational | Sysmon | Process Creation (1), Network (3), File Create (11), Registry (13) |
-| 💻 PowerShell/Operational | PowerShell | Script Block Logging (4104), Module Logging (4103) |
-| ⏱️ TaskScheduler/Operational | Task Scheduler | Task Created (106/141), Task Started (129/201) |
+| 🔐 Security | ✅ (elevated only) | Needs Administrator; without elevation the channel is skipped and reported (`security_log_accessible: false`) — never a silent failure |
+| 💻 System | ✅ | No elevation required |
+| 📋 Application | ✅ | No elevation required |
+| 🧬 Microsoft-Windows-Sysmon/Operational | ⚪ Optional | Collected only when Sysmon is installed; probed at startup and re-probed every ~5 minutes |
+
+Every event keeps its source channel, provider, event ID, record number, exact
+timestamp (ISO-8601) and raw message. Duplicate ingestion is prevented per
+channel by a record-number watermark persisted in the `collector_state` table
+(restarts do not re-ingest history); if a log's record numbering restarts
+(log cleared/rotated) the watermark resets automatically instead of dropping
+all future events.
+
+### Sysmon Prerequisites (optional)
+
+Sysmon is **not required**. When installed, its Operational channel is
+detected and registered automatically as an extra source:
+
+```powershell
+# https://learn.microsoft.com/sysinternals/downloads/sysmon
+sysmon64 -i sysmonconfig.xml
+```
+
+When the channel is missing, the collector records
+`source_status.sysmon = {"available": false, ...}` and keeps collecting the
+Windows channels — a missing source never stops the working ones. Installing
+or removing Sysmon later needs no restart (the collector re-probes every
+~5 minutes).
+
+### Required Windows Permissions
+
+| Channel | Permission |
+|---|---|
+| Security | Administrator — run elevated (admin shell or Task Scheduler "Run with highest privileges") |
+| System / Application | Standard user |
+| Sysmon/Operational | Standard user (read) |
+
+### Collector Startup & Troubleshooting
+
+```bash
+cd backend
+python main.py                     # in-process collector (development)
+python install_collector.py task   # install standalone scheduled task
+python run_collector.py            # run standalone manually
+```
+
+| Symptom | Cause / Fix |
+|---|---|
+| `Administrator privileges required for Security Event Log collection.` | Process not elevated — Security is skipped until it is; System/Application continue |
+| `Sysmon optional source not available` | Sysmon not installed (normal) — auto-registered ~5 minutes after installation |
+| No events at all | Check `source_status`, `last_error` and `channels` on `/live/status` or in Settings |
+| `Refusing to start a duplicate collector` | Single-instance lock — only one collector runs at a time (by design) |
 
 ### Collector Modes
 
@@ -221,6 +269,18 @@ ollama list
 ```
 
 > 💡 **AI features are optional.** When Ollama isn't running, SOCRA AI operates normally — AI analysis simply shows "unavailable" instead of erroring out.
+
+---
+
+## 🔌 Splunk (Optional)
+
+Splunk is **never required** for collection, storage, detection, or the UI —
+the local pipeline runs entirely against SQLite, and the collection path does
+not import the Splunk SDK. When `SPLUNK_HOST`, `SPLUNK_USERNAME` and
+`SPLUNK_PASSWORD` are set in `backend/.env`, admins can verify connectivity
+with `GET /splunk/test`. Legacy Splunk-only endpoints answer with an explicit
+"Splunk integration required" message instead of failing, and the settings
+default to empty values when unconfigured.
 
 ---
 
@@ -274,6 +334,7 @@ cd backend
 python test_persistence.py
 python test_event_registry.py
 python test_analytics.py
+python test_collector_reliability.py   # collector suite (all Windows access mocked, temp DB)
 ```
 
 **API docs** — once the backend is running, visit `http://127.0.0.1:8000/docs` for Swagger UI.
@@ -284,7 +345,8 @@ python test_analytics.py
 
 | Limitation | Detail |
 |---|---|
-| 🪟 Windows Only | Collector requires Windows OS + admin privileges |
+| 📡 Collected channels | Security, System, Application, and (when installed) Sysmon — PowerShell / Task Scheduler operational channels are **not** collected |
+| 🪟 Windows Only | Collector requires Windows OS; the Security channel additionally requires Administrator privileges |
 | 🖥️ Single Machine | Designed for single-machine deployment, not distributed |
 | 🔓 No HTTPS | Use a reverse proxy (nginx, Caddy) for TLS in production |
 | 🗄️ SQLite | Not suited for extremely high-volume environments (millions of events/day) |
