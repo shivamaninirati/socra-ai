@@ -63,34 +63,42 @@ function ForgotPassword() {
   };
 
   const inputClass =
-    "w-full rounded-xl border border-slate-700/70 bg-slate-950/70 px-4 py-3 text-sm text-slate-200 placeholder:text-slate-600 outline-none transition-colors focus:border-slate-500 focus:ring-1 focus:ring-slate-500/20";
+    "w-full rounded-lg border border-[#263957] bg-[#101b30] px-4 py-2.5 text-sm text-slate-100 outline-none transition duration-200 placeholder:text-slate-500 hover:border-[#3b5278] focus:border-blue-400/80 focus:ring-2 focus:ring-blue-500/20";
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-950 px-4 py-10 text-slate-200">
-      <div className="w-full max-w-md">
-        <div className="rounded-2xl border border-slate-800/90 bg-slate-900/70 p-6 shadow-2xl shadow-black/30 sm:p-8">
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#070d1b] px-4 py-8 text-slate-100">
+      {/* Subtle background decoration - matching Login.jsx */}
+      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+        <div className="absolute left-1/2 top-[-180px] h-[420px] w-[600px] -translate-x-1/2 rounded-full bg-blue-600/[0.09] blur-[110px]" />
+        <div className="absolute bottom-[-150px] left-[-100px] h-[350px] w-[350px] rounded-full bg-indigo-600/[0.07] blur-[100px]" />
+        <div className="absolute bottom-[-160px] right-[-100px] h-[400px] w-[400px] rounded-full bg-sky-500/[0.06] blur-[110px]" />
+        <div className="absolute inset-0 bg-gradient-to-b from-[#0b1730]/30 via-transparent to-[#030712]/40" />
+      </div>
+
+      <div className="relative w-full max-w-sm">
+        <div className="rounded-2xl border border-[#253552]/80 bg-[#050b1b]/95 p-5 shadow-[0_24px_80px_rgba(0,0,0,0.45)] backdrop-blur-xl sm:p-6">
           {/* Header */}
-          <div className="mb-8 flex flex-col items-center text-center">
-            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-slate-700/70 bg-slate-800/70">
-              <Shield size={27} className="text-slate-300" />
+          <div className="mb-6 flex flex-col items-center text-center">
+            <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl border border-blue-400/20 bg-gradient-to-br from-[#172844] to-[#0d172b] shadow-lg shadow-blue-950/30">
+              <Shield size={26} strokeWidth={1.8} className="text-blue-200" />
             </div>
 
-            <h1 className="text-2xl font-bold tracking-tight text-slate-100">
+            <h1 className="text-xl font-bold tracking-wide text-white">
               Forgot Password
             </h1>
 
-            <p className="mt-2 text-sm leading-relaxed text-slate-400">
+            <p className="mt-1 text-sm leading-relaxed text-slate-400">
               Enter your registered email address and we’ll help you recover
               access to your account.
             </p>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-5">
+          <form onSubmit={handleSubmit} className="space-y-4">
             {/* Email */}
             <div>
               <label
                 htmlFor="reset-email"
-                className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-400"
+                className="mb-2 block text-xs font-semibold uppercase tracking-wider text-blue-200/60"
               >
                 Email Address
               </label>
@@ -98,7 +106,7 @@ function ForgotPassword() {
               <div className="relative">
                 <Mail
                   size={17}
-                  className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500"
+                  className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400"
                 />
 
                 <input
@@ -128,7 +136,7 @@ function ForgotPassword() {
             <button
               type="submit"
               disabled={loading}
-              className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-600/60 bg-slate-700 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex w-full items-center justify-center gap-2 rounded-lg border border-[#233b60] bg-[#102344] py-3 text-sm font-semibold text-white shadow-lg shadow-black/20 transition duration-200 hover:border-[#31578b] hover:bg-[#17325b] focus:outline-none focus:ring-2 focus:ring-blue-500/30 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {loading ? (
                 <>
@@ -162,10 +170,10 @@ function ForgotPassword() {
           )}
 
           {/* Back to Login */}
-          <div className="mt-7 border-t border-slate-800 pt-5 text-center">
+          <div className="mt-7 border-t border-[#202d45] pt-5 text-center">
             <Link
               to="/login"
-              className="inline-flex items-center gap-2 text-xs font-medium text-slate-500 transition-colors hover:text-slate-300"
+              className="inline-flex items-center gap-2 text-xs font-medium text-blue-300/80 transition hover:text-blue-200"
             >
               <ArrowLeft size={14} />
               Back to Sign In
@@ -173,7 +181,7 @@ function ForgotPassword() {
           </div>
         </div>
 
-        <p className="mt-5 text-center text-xs text-slate-600">
+        <p className="mt-5 text-center text-[10px] font-medium uppercase tracking-[0.18em] text-slate-500/80">
           SOCRA AI · Secure Account Recovery
         </p>
       </div>

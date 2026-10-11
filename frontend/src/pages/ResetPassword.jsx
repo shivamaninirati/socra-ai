@@ -206,19 +206,27 @@ function ResetPassword() {
   };
 
   const inputClass =
-    "w-full rounded-xl border border-slate-700/70 bg-slate-950/70 px-4 py-3 text-sm text-slate-200 placeholder:text-slate-600 outline-none transition-colors focus:border-slate-500 focus:ring-1 focus:ring-slate-500/20";
+    "w-full rounded-lg border border-[#263957] bg-[#101b30] px-4 py-2.5 text-sm text-slate-100 outline-none transition duration-200 placeholder:text-slate-500 hover:border-[#3b5278] focus:border-blue-400/80 focus:ring-2 focus:ring-blue-500/20";
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-950 px-4 py-10 text-slate-200">
-      <div className="w-full max-w-md">
-        <div className="rounded-2xl border border-slate-800/90 bg-slate-900/70 p-6 shadow-2xl shadow-black/30 sm:p-8">
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#070d1b] px-4 py-8 text-slate-100">
+      {/* Subtle background decoration - matching Login.jsx */}
+      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+        <div className="absolute left-1/2 top-[-180px] h-[420px] w-[600px] -translate-x-1/2 rounded-full bg-blue-600/[0.09] blur-[110px]" />
+        <div className="absolute bottom-[-150px] left-[-100px] h-[350px] w-[350px] rounded-full bg-indigo-600/[0.07] blur-[100px]" />
+        <div className="absolute bottom-[-160px] right-[-100px] h-[400px] w-[400px] rounded-full bg-sky-500/[0.06] blur-[110px]" />
+        <div className="absolute inset-0 bg-gradient-to-b from-[#0b1730]/30 via-transparent to-[#030712]/40" />
+      </div>
+
+      <div className="relative w-full max-w-sm">
+        <div className="rounded-2xl border border-[#253552]/80 bg-[#050b1b]/95 p-5 shadow-[0_24px_80px_rgba(0,0,0,0.45)] backdrop-blur-xl sm:p-6">
           {/* Header */}
-          <div className="mb-8 flex flex-col items-center text-center">
-            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-slate-700/70 bg-slate-800/70">
-              <Shield size={27} className="text-slate-300" />
+          <div className="mb-6 flex flex-col items-center text-center">
+            <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl border border-blue-400/20 bg-gradient-to-br from-[#172844] to-[#0d172b] shadow-lg shadow-blue-950/30">
+              <Shield size={26} strokeWidth={1.8} className="text-blue-200" />
             </div>
 
-            <h1 className="text-2xl font-bold tracking-tight text-slate-100">
+            <h1 className="text-2xl font-bold tracking-wide text-white">
               Reset Password
             </h1>
 
@@ -226,12 +234,12 @@ function ResetPassword() {
               Enter your reset code and choose a new password.
             </p>
 
-            <p className="mt-3 max-w-full break-all text-sm font-medium text-slate-300">
+            <p className="mt-3 max-w-full break-all text-sm font-medium text-blue-200">
               {email}
             </p>
           </div>
 
-          <form onSubmit={handleResetPassword} className="space-y-5">
+          <form onSubmit={handleResetPassword} className="space-y-4">
             {/* OTP Input */}
             <div>
               <label
@@ -261,7 +269,7 @@ function ResetPassword() {
                     }
                     onKeyDown={(event) => handleKeyDown(index, event)}
                     onPaste={handlePaste}
-                    className="h-12 w-10 rounded-xl border border-slate-700/80 bg-slate-950/70 text-center text-lg font-semibold text-slate-100 outline-none transition-colors focus:border-slate-500 focus:ring-1 focus:ring-slate-500/20 sm:w-11"
+                    className="w-12 h-14 text-center text-xl font-bold bg-[#101b30] border border-[#263957] rounded-lg text-slate-100 outline-none transition duration-200 hover:border-[#3b5278] focus:border-blue-400/80 focus:ring-2 focus:ring-blue-500/20"
                   />
                 ))}
               </div>
@@ -270,7 +278,7 @@ function ResetPassword() {
                 type="button"
                 onClick={verifyOtp}
                 disabled={loading || otp.join("").length !== 6}
-                className="mt-3 w-full rounded-lg border border-slate-700/70 bg-slate-800/50 px-3 py-2 text-xs font-semibold text-slate-300 transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+                className="mt-4 w-full rounded-lg border border-[#263957] bg-[#101b30] px-3 py-2 text-xs font-semibold text-blue-200 transition duration-200 hover:bg-[#172844] disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {otpVerified ? "Code entered" : "Check Code"}
               </button>
@@ -307,7 +315,7 @@ function ResetPassword() {
                   type="button"
                   onClick={() => setShowPassword((visible) => !visible)}
                   aria-label={showPassword ? "Hide password" : "Show password"}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-500 transition-colors hover:text-slate-300"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-500 transition duration-200 hover:text-blue-200"
                 >
                   {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
                 </button>
@@ -350,7 +358,7 @@ function ResetPassword() {
                       ? "Hide confirmation password"
                       : "Show confirmation password"
                   }
-                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-500 transition-colors hover:text-slate-300"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-500 transition duration-200 hover:text-blue-200"
                 >
                   {showConfirmPassword ? (
                     <EyeOff size={17} />
@@ -365,7 +373,7 @@ function ResetPassword() {
             <button
               type="submit"
               disabled={loading || resendLoading}
-              className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-600/60 bg-slate-700 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-blue-500/20 bg-blue-600/90 px-4 py-3 text-sm font-semibold text-white transition duration-200 hover:bg-blue-700/90 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {loading ? (
                 <>
@@ -384,7 +392,7 @@ function ResetPassword() {
                   type="button"
                   onClick={handleResend}
                   disabled={resendLoading || loading}
-                  className="text-sm font-medium text-slate-300 transition-colors hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                  className="text-blue-200/80 hover:text-blue-100 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {resendLoading ? (
                     <span className="inline-flex items-center gap-2">
@@ -429,7 +437,7 @@ function ResetPassword() {
           <div className="mt-7 border-t border-slate-800 pt-5 text-center">
             <Link
               to="/login"
-              className="inline-flex items-center gap-2 text-xs font-medium text-slate-500 transition-colors hover:text-slate-300"
+              className="inline-flex items-center gap-2 text-xs font-medium text-blue-200/80 transition duration-200 hover:text-blue-100"
             >
               <ArrowLeft size={14} />
               Back to Sign In

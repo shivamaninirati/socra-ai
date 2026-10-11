@@ -64,36 +64,42 @@ function Register() {
   };
 
   const inputClass =
-    "w-full rounded-lg border border-slate-800 bg-slate-900/70 px-4 py-3 text-sm text-slate-200 outline-none transition placeholder:text-slate-600 hover:border-slate-700 focus:border-slate-600 focus:ring-2 focus:ring-slate-500/20";
+    "w-full rounded-lg border border-[#263957] bg-[#101b30] px-4 py-2.5 text-sm text-slate-100 outline-none transition duration-200 placeholder:text-slate-500 hover:border-[#3b5278] focus:border-blue-400/80 focus:ring-2 focus:ring-blue-500/20";
 
   const labelClass =
-    "mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-400";
+    "mb-2 block text-xs font-semibold uppercase tracking-wider text-blue-200/60";
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#080f1e] px-4 py-8 text-slate-100">
-      {/* Subtle background decoration */}
-      <div className="pointer-events-none absolute inset-0">
-        <div className="absolute left-1/2 top-0 h-72 w-96 -translate-x-1/2 rounded-full bg-slate-700/10 blur-3xl" />
-        <div className="absolute bottom-0 right-0 h-64 w-64 rounded-full bg-blue-950/10 blur-3xl" />
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#070d1b] px-4 py-6 text-slate-100">
+      {/* Subtle background decoration - matching Login.jsx */}
+      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+        <div className="absolute left-1/2 top-[-180px] h-[420px] w-[600px] -translate-x-1/2 rounded-full bg-blue-600/[0.09] blur-[110px]" />
+        <div className="absolute bottom-[-150px] left-[-100px] h-[350px] w-[350px] rounded-full bg-indigo-600/[0.07] blur-[100px]" />
+        <div className="absolute bottom-[-160px] right-[-100px] h-[400px] w-[400px] rounded-full bg-sky-500/[0.06] blur-[110px]" />
+        <div className="absolute inset-0 bg-gradient-to-b from-[#0b1730]/30 via-transparent to-[#030712]/40" />
       </div>
 
-      <div className="relative w-full max-w-md">
-        <div className="rounded-2xl border border-slate-800/80 bg-slate-950/80 p-7 shadow-2xl shadow-black/30 backdrop-blur-xl sm:p-8">
+      <div className="relative w-full max-w-sm">
+        <div className="rounded-2xl border border-[#253552]/80 bg-[#050b1b]/95 p-5 shadow-[0_24px_80px_rgba(0,0,0,0.45)] backdrop-blur-xl sm:p-6">
           {/* Branding */}
-          <div className="mb-7 flex flex-col items-center">
-            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-slate-700/70 bg-slate-900 shadow-lg shadow-black/20">
-              <Shield size={28} className="text-slate-200" />
+          <div className="mb-5 flex flex-col items-center">
+            <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl border border-blue-400/20 bg-gradient-to-br from-[#172844] to-[#0d172b] shadow-lg shadow-blue-950/30">
+              <Shield
+                size={26}
+                strokeWidth={1.8}
+                className="text-blue-200"
+              />
             </div>
 
-            <h1 className="text-2xl font-bold tracking-wide text-slate-100">
+            <h1 className="text-2xl font-bold tracking-wide text-white">
               Create Account
             </h1>
 
-            <p className="mt-2 text-center text-[11px] font-medium uppercase tracking-[0.18em] text-slate-500">
-              SOCRA AI Security Platform
+            <p className="mt-2 text-center text-[11px] font-medium uppercase tracking-[0.2em] text-blue-200/55">
+              SOCRA AI Security Investigation Platform
             </p>
 
-            <div className="mt-5 h-px w-16 bg-slate-700/80" />
+            <div className="mt-4 h-px w-16 bg-gradient-to-r from-transparent via-blue-400/50 to-transparent" />
           </div>
 
           <form
@@ -101,7 +107,7 @@ function Register() {
               e.preventDefault();
               register();
             }}
-            className="space-y-4"
+            className="space-y-3"
           >
             {/* Full name */}
             <div>
@@ -159,7 +165,7 @@ function Register() {
                   type="button"
                   onClick={() => setShowPassword((prev) => !prev)}
                   aria-label={showPassword ? "Hide password" : "Show password"}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded p-1 text-slate-500 transition hover:text-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-500/40"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 transition hover:text-blue-200 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
                 >
                   {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
                 </button>
@@ -191,15 +197,9 @@ function Register() {
 
                 <button
                   type="button"
-                  onClick={() =>
-                    setShowConfirmPassword((prev) => !prev)
-                  }
-                  aria-label={
-                    showConfirmPassword
-                      ? "Hide confirm password"
-                      : "Show confirm password"
-                  }
-                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded p-1 text-slate-500 transition hover:text-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-500/40"
+                  onClick={() => setShowConfirmPassword((prev) => !prev)}
+                  aria-label={showConfirmPassword ? "Hide confirm password" : "Show confirm password"}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 transition hover:text-blue-200 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
                 >
                   {showConfirmPassword ? (
                     <EyeOff size={17} />
@@ -224,7 +224,7 @@ function Register() {
             <button
               type="submit"
               disabled={loading}
-              className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-slate-600/70 bg-slate-800 py-3 text-sm font-semibold text-slate-100 transition duration-200 hover:border-slate-500 hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-500/40 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex w-full items-center justify-center gap-2 rounded-lg border border-[#233b60] bg-[#102344] py-2.5 text-sm font-semibold text-white shadow-lg shadow-black/20 transition duration-200 hover:border-[#31578b] hover:bg-[#17325b] focus:outline-none focus:ring-2 focus:ring-blue-500/30 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {loading ? (
                 <>
@@ -238,20 +238,19 @@ function Register() {
           </form>
 
           {/* Sign in */}
-          <div className="mt-7 border-t border-slate-800/80 pt-5 text-center">
-            <p className="text-sm text-slate-500">
+          <div className="mt-5 border-t border-[#202d45] pt-4 text-center">
+            <p className="text-sm text-slate-400">
               Already have an account?{" "}
               <Link
                 to="/login"
-                className="font-semibold text-slate-300 transition hover:text-white"
+                className="font-semibold text-blue-200 transition hover:text-white"
               >
-                Sign In
+                Sign in
               </Link>
             </p>
           </div>
         </div>
-
-        <p className="mt-5 text-center text-[10px] font-medium uppercase tracking-[0.16em] text-slate-600">
+        <p className="mt-5 text-center text-[10px] font-medium uppercase tracking-[0.18em] text-slate-500/80">
           SOCRA AI · Security Operations
         </p>
       </div>
